@@ -307,10 +307,18 @@ fun Welcome(onDone: () -> Unit) {
             }
 
             Text(
+                text = stringResource(R.string.wel_pc_preset_wins),
+                style = MaterialTheme.typography.bodySmall,
+                color = c.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .testTag("welcomePcPresetNote"),
+            )
+            Text(
                 text = stringResource(R.string.wel_foot),
                 style = MaterialTheme.typography.bodySmall,
                 color = c.muted,
-                modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
         }
 

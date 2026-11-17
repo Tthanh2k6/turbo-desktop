@@ -6,6 +6,7 @@ import android.content.res.Resources
 import android.graphics.BitmapFactory
 import android.webkit.CookieManager
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -848,8 +849,7 @@ private data class StepSummaryResult(
 
 private fun presentActionVerb(ctx: Context, action: String): String = actionVerb(ctx, action)
 
-private fun cleanToolName(raw: String): String =
-    raw.substringAfterLast("__").replace('_', ' ').trim().ifBlank { raw }
+private fun cleanToolName(raw: String): String = HubJson.cleanToolName(raw)
 
 private fun buildCompactSteps(
     ctx: Context,
@@ -1110,8 +1110,8 @@ fun WorkTab(
         maxFps = maxFps,
     )
 
-    val isLocked = !stopped && (inputLocked || indicator == "input_locked")
-    val isActing = !stopped && (isLocked || indicator == "acting" || taskRunning)
+    val isLocked = !stopped && !paused && (inputLocked || indicator == "input_locked")
+    val isActing = !stopped && !paused && (isLocked || indicator == "acting" || taskRunning)
     val wholeTaskLock = (lockRemoteState.ifBlank {
         policy?.optString("lockRemoteTask").orEmpty()
     }.ifBlank { "whole_task" }) == "whole_task"
@@ -1506,7 +1506,7 @@ fun WorkTab(
 
                     // Full answer (output) + Sao chép / Giao lại when task is finished
                     if (taskStatus != "running") {
-                        val answer = stepSummary.finalAnswer
+                        val answer = HubJson.taskAnswer(selectedHistoryObj ?: activeTaskObj, stepSummary.finalAnswer)
                         Text(
                             text = stringResource(R.string.live_final_label),
                             style = MaterialTheme.typography.labelMedium,
@@ -2020,6 +2020,22 @@ fun ApprovalsTab(activity: FragmentActivity) {
                         .padding(TurboSpacing.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    if (a.fromClaudeCode) {
+                        Box(
+                            modifier = Modifier
+                                .clip(TurboRadii.full)
+                                .background(c.primaryContainer)
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                .testTag("ccSourceChip"),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.appr_source_cc),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = c.onPrimaryContainer,
+                            )
+                        }
+                    }
+
                     if (index > 0 && !a.noTimeout) {
                         val left = (a.expiresAt - now).toLong().coerceAtLeast(0L)
                         Row(
@@ -2882,7 +2898,7 @@ private fun ReportOverviewSection(
 }
 
 // ============================================================================================ 10 / 18 Nhật ký (Audit list)
-private enum class AuditFilter(val labelRes: Int) {
+internal enum class AuditFilter(val labelRes: Int) {
     ALL(R.string.audit_f_all),
     ACTIONS(R.string.audit_f_actions),
     APPROVALS(R.string.audit_f_approvals),
@@ -2891,7 +2907,7 @@ private enum class AuditFilter(val labelRes: Int) {
     fun matches(kind: String): Boolean = when (this) {
         ALL -> true
         ACTIONS -> kind in setOf("action", "tool_result", "final", "task_start", "task_end", "input_lock", "screen_view")
-        APPROVALS -> kind.startsWith("approval")
+        APPROVALS -> HubJson.isApprovalAuditKind(kind)
         STOPS -> kind in setOf("stop", "resume", "takeover", "action_blocked", "rejected", "lockout")
     }
 }
@@ -2950,9 +2966,29 @@ private fun formatAuditEntry(ctx: Context, c: TurboColors, entry: JSONObject): F
             ).joinToString(" · ")
             FormattedAuditRow(Icons.Rounded.GppMaybe, tint, ctx.getString(R.string.audit_k_appr_res, dec, target), sub)
         }
+        "cc_permission_requested" -> {
+            val title = HubJson.formatCcRequestedTitle(d, ctx.getString(R.string.audit_k_cc_req))
+            val sub = listOfNotNull(cleanToolName(s("tool")).ifBlank { null }, s("cwd").ifBlank { null }).joinToString(" · ")
+            FormattedAuditRow(Icons.Rounded.GppMaybe, c.warn, title, sub)
+        }
+        "cc_permission_resolved" -> {
+            val title = HubJson.formatCcResolvedTitle(
+                data = d,
+                fmt = ctx.getString(R.string.audit_k_cc_res),
+                decisionWord = word(ctx, s("decision")),
+                byPhone = ctx.getString(R.string.audit_by_phone),
+                byPc = ctx.getString(R.string.audit_by_pc),
+                byCc = ctx.getString(R.string.audit_by_cc),
+                fallbackActor = { formatAuditDevice(ctx, it) },
+            )
+            val tint = if (s("decision") == "allow") c.primary else c.warn
+            val sub = listOfNotNull(s("control").ifBlank { s("approval").ifBlank { null } }, cleanToolName(s("tool")).ifBlank { null }).joinToString(" · ")
+            FormattedAuditRow(Icons.Rounded.GppMaybe, tint, title, sub)
+        }
         "input_lock" -> {
             val on = d.optBoolean("locked")
-            FormattedAuditRow(Icons.Rounded.Lock, if (on) c.aiText else c.onSurfaceVariant, ctx.getString(if (on) R.string.audit_k_lock_on else R.string.audit_k_lock_off), s("mode"))
+            val modeLabel = HubJson.formatLockMode(s("mode"), ctx.getString(R.string.set_lock_task_v3), ctx.getString(R.string.set_lock_real))
+            FormattedAuditRow(Icons.Rounded.Lock, if (on) c.aiText else c.onSurfaceVariant, ctx.getString(if (on) R.string.audit_k_lock_on else R.string.audit_k_lock_off), modeLabel)
         }
         "screen_view" -> FormattedAuditRow(Icons.Rounded.Videocam, c.onSurfaceVariant, ctx.getString(R.string.audit_k_screen_view), formatAuditDevice(ctx, s("device")))
         "action_blocked" -> FormattedAuditRow(Icons.Rounded.StopCircle, c.stopText, ctx.getString(R.string.audit_k_blocked), cleanToolName(s("tool")))
@@ -3758,9 +3794,9 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
                 text = stringResource(R.string.set_url_add),
                 modifier = Modifier.testTag("addUrlButton"),
             ) {
-                val trimmed = url.trim()
-                if (trimmed.isNotEmpty()) {
-                    Graph.prefs.setUrl(Protocol.transportName(trimmed), trimmed)
+                val normalized = Protocol.normalizeHttpUrl(url)
+                if (normalized.isNotEmpty()) {
+                    Graph.prefs.setUrl(Protocol.transportName(normalized), normalized)
                     url = ""
                 }
             }
@@ -3802,15 +3838,22 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
             TurboTextField(
                 value = relayCode,
                 onValueChange = { relayCode = it },
-                hint = stringResource(R.string.set_wake_pair),
+                hint = stringResource(R.string.set_wake_code_hint),
                 keyboardType = KeyboardType.Number,
+                tag = "relayCode",
             )
             GhostButton(text = stringResource(R.string.set_wake_pair)) {
                 scope.launch {
                     try {
-                        Graph.relay.pair(relayUrl, relayCode, "phone")
+                        val normRelay = Protocol.normalizeHttpUrl(relayUrl)
+                        if (normRelay.isEmpty()) throw HubError(ErrKind.NETWORK, ctx.getString(R.string.set_wake_relay))
+                        Graph.relay.pair(normRelay, relayCode.trim(), "phone")
+                        relayUrl = normRelay
+                        relayCode = ""
+                        Graph.wakeState.value = ctx.getString(R.string.wake_paired_ok)
                     } catch (e: Exception) {
-                        Graph.fail(e)
+                        val msg = Graph.fail(e)
+                        Graph.wakeState.value = ctx.getString(R.string.wake_pair_fail, msg)
                     }
                 }
             }
@@ -3822,10 +3865,11 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
                 scope.launch { Graph.wakePc() }
             }
             if (wake.isNotBlank()) {
+                val wakeOk = wake == stringResource(R.string.wake_paired_ok) || wake == stringResource(R.string.wake_ready)
                 Text(
                     text = wake,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = c.warn,
+                    color = if (wakeOk) c.primary else c.warn,
                     modifier = Modifier.testTag("wakeState"),
                 )
             }
@@ -3871,20 +3915,56 @@ fun CfLogin(onDone: () -> Unit) {
     ) {
         if (target != null) {
             AndroidView(
-                factory = { ctx -> WebView(ctx).apply { settings.javaScriptEnabled = true; loadUrl(target) } },
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        webViewClient = WebViewClient()
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        loadUrl(target)
+                    }
+                },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
             )
         } else {
-            Text(
-                text = stringResource(R.string.set_url_hint),
-                style = MaterialTheme.typography.bodyLarge,
-                color = c.onSurfaceVariant,
+            Box(
                 modifier = Modifier
                     .weight(1f)
+                    .fillMaxWidth()
                     .padding(TurboSpacing.gutter),
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(TurboRadii.large)
+                        .background(c.surfaceContainer)
+                        .padding(24.dp)
+                        .testTag("cfEmpty"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Cloud,
+                        contentDescription = null,
+                        tint = c.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.cf_empty_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = c.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        text = stringResource(R.string.cf_empty_sub),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
         PrimaryButton(
             text = stringResource(R.string.btn_ok),

@@ -132,6 +132,7 @@ fun Main(
     val running by Graph.taskRunning.collectAsState()
     val inputLocked by Graph.inputLocked.collectAsState()
     val stopped by Graph.stopped.collectAsState()
+    val paused by Graph.paused.collectAsState()
     val pending by Graph.pending.collectAsState()
     val screenViewEnabled by Graph.screenViewEnabled.collectAsState()
     val reducedMotion = rememberReducedMotion()
@@ -151,6 +152,7 @@ fun Main(
     }
 
     val effectiveIndicator = when {
+        stopped || paused -> "idle"
         inputLocked || rawIndicator == "input_locked" -> "input_locked"
         rawIndicator == "acting" || running -> "acting"
         else -> rawIndicator

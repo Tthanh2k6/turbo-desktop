@@ -3,6 +3,7 @@ package dev.turbodesktop.remote
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -106,5 +107,77 @@ class ProtocolTest {
         assertTrue(Protocol.verify(pub, canonical, sig))
         val tampered = jpegBytes.clone().also { it[5] = 0x11 }
         assertFalse(Protocol.verify(pub, Protocol.canonicalResponse(200, "/screen.jpg?w=960&q=60", tampered, "1800000100", "noncebin"), sig))
+    }
+
+    @Test fun normalizeHttpUrlPrefixesSchemeAndRejectsInvalid() {
+        assertEquals("http://192.168.1.10:8750", Protocol.normalizeHttpUrl("192.168.1.10:8750"))
+        assertEquals("http://100.64.0.2:8750", Protocol.normalizeHttpUrl("  100.64.0.2:8750/ "))
+        assertEquals("http://10.0.2.2:8750", Protocol.normalizeHttpUrl("HTTP://10.0.2.2:8750/"))
+        assertEquals("https://hub.example.com", Protocol.normalizeHttpUrl("https://hub.example.com/"))
+        assertEquals("", Protocol.normalizeHttpUrl("   "))
+        assertEquals("", Protocol.normalizeHttpUrl("http://"))
+        assertEquals("", Protocol.normalizeHttpUrl("ftp://10.0.2.2:8750"))
+        assertEquals("lan", Protocol.transportName("192.168.1.10:8750"))
+        assertEquals("tailscale", Protocol.transportName("100.88.1.4:8750"))
+    }
+
+    @Test fun auditLineMappingAndFilterIncludeClaudeCodeAndLockModes() {
+        assertTrue(AuditFilter.APPROVALS.matches("approval_requested"))
+        assertTrue(AuditFilter.APPROVALS.matches("approval_resolved"))
+        assertTrue(AuditFilter.APPROVALS.matches("cc_permission_requested"))
+        assertTrue(AuditFilter.APPROVALS.matches("cc_permission_resolved"))
+        assertFalse(AuditFilter.APPROVALS.matches("action"))
+
+        val reqTitle = HubJson.formatCcRequestedTitle(
+            JSONObject("""{"control":"pytest -q","tool":"Bash"}"""),
+            "Claude Code xin chạy: %1\$s",
+        )
+        assertEquals("Claude Code xin chạy: pytest -q", reqTitle)
+
+        val resPhone = HubJson.formatCcResolvedTitle(
+            JSONObject("""{"decision":"allow","by":"phone"}"""),
+            "%1\$s bởi %2\$s",
+            decisionWord = "cho phép",
+            byPhone = "điện thoại",
+            byPc = "PC",
+            byCc = "Claude Code",
+        )
+        assertEquals("Cho phép bởi điện thoại", resPhone)
+
+        val resPc = HubJson.formatCcResolvedTitle(
+            JSONObject("""{"decision":"deny","by":"pc"}"""),
+            "%1\$s bởi %2\$s",
+            decisionWord = "từ chối",
+            byPhone = "điện thoại",
+            byPc = "PC",
+            byCc = "Claude Code",
+        )
+        assertEquals("Từ chối bởi PC", resPc)
+
+        val resCc = HubJson.formatCcResolvedTitle(
+            JSONObject("""{"decision":"withdrawn","by":"claude-code"}"""),
+            "%1\$s bởi %2\$s",
+            decisionWord = "đã rút lại",
+            byPhone = "điện thoại",
+            byPc = "PC",
+            byCc = "Claude Code",
+        )
+        assertEquals("Đã rút lại bởi Claude Code", resCc)
+
+        assertEquals("Suốt cả việc", HubJson.formatLockMode("whole_task", "Suốt cả việc", "Khi dùng chuột thật"))
+        assertEquals("Khi dùng chuột thật", HubJson.formatLockMode("real_input", "Suốt cả việc", "Khi dùng chuột thật"))
+    }
+
+    @Test fun taskAnswerAndViaMapping() {
+        val withAns = JSONObject("""{"id":"t1","status":"done","answer":"  Kết quả là 42  "}""")
+        val withoutAns = JSONObject("""{"id":"t2","status":"done"}""")
+        assertEquals("Kết quả là 42", HubJson.taskAnswer(withAns, null))
+        assertEquals("Live answer", HubJson.taskAnswer(withAns, "Live answer"))
+        assertNull(HubJson.taskAnswer(withoutAns, null))
+        assertNull(HubJson.taskAnswer(null, null))
+
+        assertTrue(HubJson.isRealInputVia("input"))
+        assertTrue(HubJson.isRealInputVia("ocr"))
+        assertFalse(HubJson.isRealInputVia("uia"))
     }
 }

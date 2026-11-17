@@ -176,12 +176,13 @@ fun PresenceHeader(modifier: Modifier = Modifier) {
     val online by Graph.online.collectAsState()
     val via by Graph.via.collectAsState()
     val stopped by Graph.stopped.collectAsState()
+    val paused by Graph.paused.collectAsState()
     val inputLocked by Graph.inputLocked.collectAsState()
     val rawIndicator by Graph.indicator.collectAsState()
     val taskRunning by Graph.taskRunning.collectAsState()
 
-    val isLocked = !stopped && (inputLocked || rawIndicator == "input_locked")
-    val isActing = !stopped && !isLocked && (rawIndicator == "acting" || taskRunning)
+    val isLocked = !stopped && !paused && (inputLocked || rawIndicator == "input_locked")
+    val isActing = !stopped && !paused && !isLocked && (rawIndicator == "acting" || taskRunning)
 
     val dotColor: Color
     val stateTextColor: Color
@@ -191,6 +192,11 @@ fun PresenceHeader(modifier: Modifier = Modifier) {
             dotColor = c.stop
             stateTextColor = c.stopText
             stateLabel = stringResource(R.string.title_stopped)
+        }
+        paused -> {
+            dotColor = c.warn
+            stateTextColor = c.warn
+            stateLabel = stringResource(R.string.presence_paused)
         }
         isLocked -> {
             dotColor = c.ai

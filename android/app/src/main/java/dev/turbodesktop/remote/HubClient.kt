@@ -27,12 +27,15 @@ class Prefs(ctx: Context) {
         } catch (e: Exception) { emptyList() }
         set(v) = put("urls", org.json.JSONArray(v.map { org.json.JSONObject().put("name", it.first).put("url", it.second.trim().trimEnd('/')) }).toString())
 
-    fun setUrl(name: String, url: String) { urls = urls.filter { it.first != name } + (name to url) }
+    fun setUrl(name: String, url: String) {
+        val norm = Protocol.normalizeHttpUrl(url).ifEmpty { url.trim().trimEnd('/') }
+        urls = urls.filter { it.first != name } + (name to norm)
+    }
     var cfCookie: String get() = s("cfCookie"); set(v) = put("cfCookie", v)
     var activePath: String get() = s("active"); set(v) = put("active", v)
     var sessionId: String get() = s("sessionId"); set(v) = put("sessionId", v)
     var sessionExp: Long get() = sp.getLong("sessionExp", 0); set(v) = sp.edit().putLong("sessionExp", v).apply()
-    var relayUrl: String get() = s("relayUrl"); set(v) = put("relayUrl", v.trim().trimEnd('/'))
+    var relayUrl: String get() = s("relayUrl"); set(v) = put("relayUrl", Protocol.normalizeHttpUrl(v).ifEmpty { v.trim().trimEnd('/') })
     var relayPaired: Boolean get() = sp.getBoolean("relayPaired", false); set(v) = sp.edit().putBoolean("relayPaired", v).apply()
     var preset: String get() = s("preset"); set(v) = put("preset", v)
     var onboarded: Boolean get() = sp.getBoolean("onboarded", false); set(v) = sp.edit().putBoolean("onboarded", v).apply()
@@ -91,7 +94,12 @@ class HubClient(
         val ts = ts()
         val nonce = UUID.randomUUID().toString().replace("-", "")
         val msg = Protocol.canonicalRequest(method, path, bytes, ts, nonce)
-        val rb = Request.Builder().url(base + path)
+        val normalizedBase = Protocol.normalizeHttpUrl(base).ifEmpty { base.trim().trimEnd('/') }
+        val rb = try {
+            Request.Builder().url(normalizedBase + path)
+        } catch (e: IllegalArgumentException) {
+            throw IOException("Invalid hub URL: $base", e)
+        }
             .header("X-Ts", ts).header("X-Nonce", nonce).header("X-Sig", plain.sign(msg))
         if (deviceHeader) rb.header("X-Device", prefs.deviceId)
         if (strong) rb.header("X-Auth-Sig", auth.sign(msg))
@@ -166,10 +174,11 @@ class HubClient(
     /** First contact. Signed by BOTH keys (proof of possession). If [hubKey] is null the hub key is trusted on first use. */
     suspend fun pair(baseUrl: String, hubKey: String?, code: String, deviceName: String,
                      urls: List<Pair<String, String>> = emptyList()): String = withContext(Dispatchers.IO) {
+        val normBase = Protocol.normalizeHttpUrl(baseUrl).ifEmpty { baseUrl.trim().trimEnd('/') }
         val body = JSONObject().put("code", code).put("name", deviceName)
             .put("pub", plain.publicKeyB64).put("authPub", auth.publicKeyB64).toString()
-        val (req, nonce, _) = build(baseUrl, "pair", "POST", "/pair", body, strong = true, session = false, deviceHeader = false)
         try {
+            val (req, nonce, _) = build(normBase, "pair", "POST", "/pair", body, strong = true, session = false, deviceHeader = false)
             http.newCall(req).execute().use { r ->
                 val bytes = r.body?.bytes() ?: ByteArray(0)
                 if (r.code != 200) throw HubError(ErrKind.REJECTED, "Pairing refused (${r.code}): ${String(bytes).take(120)}", r.code)
@@ -186,12 +195,12 @@ class HubClient(
                 prefs.deviceId = j.getString("deviceId")
                 HubJson.needs(j).let { prefs.needsTotp = it.totp; prefs.needsBiometric = it.biometric }
                 prefs.totpEnrollPending = j.optBoolean("totpEnroll", false)
-                prefs.urls = urls.ifEmpty { listOf(Protocol.transportName(baseUrl) to baseUrl) }.let { l ->
-                    if (l.any { it.second == baseUrl }) l else listOf(Protocol.transportName(baseUrl) to baseUrl) + l }
+                prefs.urls = urls.ifEmpty { listOf(Protocol.transportName(normBase) to normBase) }.let { l ->
+                    if (l.any { it.second == normBase }) l else listOf(Protocol.transportName(normBase) to normBase) + l }
                 got
             }
         } catch (e: IOException) {
-            throw HubError(ErrKind.NETWORK, "Cannot reach $baseUrl: ${e.message}")
+            throw HubError(ErrKind.NETWORK, "Cannot reach $normBase: ${e.message}")
         }
     }
 
@@ -242,9 +251,15 @@ class RelayClient(private val prefs: Prefs, private val plain: Signer,
         val ts = (System.currentTimeMillis() / 1000).toString()
         val nonce = UUID.randomUUID().toString().replace("-", "")
         val sig = plain.sign(Protocol.canonicalRequest(method, path, bytes, ts, nonce))
-        return Request.Builder().url(prefs.relayUrl + path).header("X-Ts", ts).header("X-Nonce", nonce)
-            .header("X-Sig", sig).header("X-Device", Protocol.deviceId(plain.publicKeyB64))
-            .method(method, if (method == "GET") null else bytes.toRequestBody("application/json".toMediaType())).build()
+        val base = Protocol.normalizeHttpUrl(prefs.relayUrl)
+        if (base.isEmpty()) throw HubError(ErrKind.NETWORK, "Invalid relay URL")
+        return try {
+            Request.Builder().url(base + path).header("X-Ts", ts).header("X-Nonce", nonce)
+                .header("X-Sig", sig).header("X-Device", Protocol.deviceId(plain.publicKeyB64))
+                .method(method, if (method == "GET") null else bytes.toRequestBody("application/json".toMediaType())).build()
+        } catch (e: IllegalArgumentException) {
+            throw HubError(ErrKind.NETWORK, "Invalid relay URL: ${e.message}")
+        }
     }
 
     suspend fun pair(url: String, code: String, name: String) = withContext(Dispatchers.IO) {

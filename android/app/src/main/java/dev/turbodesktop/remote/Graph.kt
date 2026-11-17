@@ -22,7 +22,7 @@ fun tidy(s: String): String = s.removePrefix("{\"result\":\"").replace("\\\"", "
 /** Localised words for hub codes (decisions, task status) so no English leaks into the Vietnamese UI. */
 fun word(c: android.content.Context, code: String): String {
     val id = when (code) {
-    "allow" -> R.string.dec_allow; "deny" -> R.string.dec_deny; "timeout" -> R.string.dec_timeout; "stop" -> R.string.dec_stop
+    "allow" -> R.string.dec_allow; "deny" -> R.string.dec_deny; "timeout" -> R.string.dec_timeout; "stop" -> R.string.dec_stop; "withdrawn" -> R.string.dec_withdrawn
     "done" -> R.string.st_done; "failed" -> R.string.st_failed; "stopped" -> R.string.st_stopped; "running" -> R.string.st_running
     else -> return code
     }
@@ -41,7 +41,7 @@ data class Ev(val seq: Long, val type: String, val json: JSONObject) {
                 "click" -> R.string.verb_click; "invoke" -> R.string.verb_invoke; "type" -> R.string.verb_type; "set_value" -> R.string.verb_set_value
                 "select" -> R.string.verb_select; "toggle" -> R.string.verb_toggle; "expand" -> R.string.verb_expand; "focus" -> R.string.verb_focus
                 "scroll" -> R.string.verb_scroll; "press_keys" -> R.string.verb_press_keys; else -> R.string.verb_other }), arg(1),
-                c.getString(if (arg(2) == "input") R.string.via_input else R.string.via_uia))
+                c.getString(if (HubJson.isRealInputVia(arg(2))) R.string.via_input else R.string.via_uia))
             "read_controls" -> c.getString(R.string.sum_read_controls, arg(0).toIntOrNull() ?: 0)
             "read_window" -> c.getString(R.string.sum_read_window)
             "ran_steps" -> c.getString(R.string.sum_ran_steps, arg(0).toIntOrNull() ?: 0, arg(1).toIntOrNull() ?: 0)
@@ -239,7 +239,11 @@ object Graph {
         var urls = emptyList<Pair<String, String>>()
         val (url, key, code) = if (!text.isNullOrBlank()) {
             val p = Protocol.parsePairText(text); urls = p.urls; Triple(p.url, p.hubKey, p.code)
-        } else Triple(urlManual!!.trim().trimEnd('/'), null, codeManual!!.trim())
+        } else {
+            val rawUrl = urlManual!!.trim()
+            val normUrl = Protocol.normalizeHttpUrl(rawUrl).ifEmpty { rawUrl.trimEnd('/') }
+            Triple(normUrl, null, codeManual!!.trim())
+        }
         val got = client.pair(url, key, code, app.getString(R.string.device_name_fmt, Build.MANUFACTURER, Build.MODEL), urls)
         needs.value = Needs(prefs.needsTotp, prefs.needsBiometric)
         totpEnrollPending.value = prefs.totpEnrollPending

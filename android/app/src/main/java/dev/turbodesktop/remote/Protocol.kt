@@ -58,9 +58,25 @@ object Protocol {
             o.getString("code"), o.optLong("exp", 0), list)
     }
 
+    /** Normalises a user-entered hub/relay URL: prefixes http:// when no scheme is present; returns "" if invalid. */
+    fun normalizeHttpUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return ""
+        val withScheme = when {
+            trimmed.startsWith("http://", ignoreCase = true) -> "http://" + trimmed.substring(7)
+            trimmed.startsWith("https://", ignoreCase = true) -> "https://" + trimmed.substring(8)
+            trimmed.contains("://") -> return ""
+            else -> "http://$trimmed"
+        }.trimEnd('/')
+        val afterScheme = withScheme.substringAfter("://", "")
+        if (afterScheme.isBlank() || afterScheme.startsWith("/") || afterScheme.startsWith(":")) return ""
+        return withScheme
+    }
+
     /** local | lan | tailscale | cloudflare, guessed from the address when the hub did not name it. */
     fun transportName(url: String): String {
-        val host = url.substringAfter("://").substringBefore("/").substringBefore(":")
+        val norm = normalizeHttpUrl(url).ifEmpty { url.trim() }
+        val host = norm.substringAfter("://").substringBefore("/").substringBefore(":")
         val o = host.split(".").mapNotNull { it.toIntOrNull() }
         return when {
             host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2" -> "local"
@@ -174,5 +190,55 @@ object HubJson {
         } else emptyList()
 
         return ReportData(periodDays = periodDays, days = days, totals = totals, topApps = topApps)
+    }
+
+    fun isRealInputVia(via: String): Boolean = via == "input" || via == "ocr"
+
+    /** Resolves the answer to show for a task: live event final answer first, then GET /tasks `answer` field. */
+    fun taskAnswer(task: org.json.JSONObject?, eventAnswer: String? = null): String? {
+        if (!eventAnswer.isNullOrBlank()) return eventAnswer.trim()
+        val raw = task?.optString("answer")?.takeIf { it != "null" && it.isNotBlank() }?.trim()
+        return raw
+    }
+
+    fun cleanToolName(raw: String): String =
+        raw.substringAfterLast("__").replace('_', ' ').trim().ifBlank { raw }
+
+    fun isApprovalAuditKind(kind: String): Boolean =
+        kind.startsWith("approval") || kind == "cc_permission_requested" || kind == "cc_permission_resolved"
+
+    fun formatLockMode(mode: String, wholeTaskLabel: String, realInputLabel: String): String = when (mode) {
+        "whole_task" -> wholeTaskLabel
+        "real_input" -> realInputLabel
+        else -> mode
+    }
+
+    fun formatCcRequestedTitle(data: org.json.JSONObject, fmt: String): String {
+        val control = data.optString("control").takeIf { it != "null" }.orEmpty()
+        val tool = data.optString("tool").takeIf { it != "null" }.orEmpty()
+        val target = control.ifBlank { cleanToolName(tool) }
+        return String.format(fmt, target)
+    }
+
+    fun formatCcResolvedTitle(
+        data: org.json.JSONObject,
+        fmt: String,
+        decisionWord: String,
+        byPhone: String,
+        byPc: String,
+        byCc: String,
+        fallbackActor: (String) -> String = { it },
+    ): String {
+        val dec = decisionWord.replaceFirstChar { it.uppercase() }
+        val byRaw = data.optString("by").takeIf { it != "null" && it.isNotBlank() }
+            ?: data.optString("device").takeIf { it != "null" && it.isNotBlank() }
+            ?: ""
+        val actor = when (byRaw.lowercase()) {
+            "", "phone" -> byPhone
+            "pc", "pc-admin", "local-admin" -> byPc
+            "claude-code", "claude_code" -> byCc
+            else -> fallbackActor(byRaw).ifBlank { byPhone }
+        }
+        return String.format(fmt, dec, actor)
     }
 }

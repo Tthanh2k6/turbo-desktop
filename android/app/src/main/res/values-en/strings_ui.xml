@@ -12,6 +12,7 @@
     <string name="route_offline">Disconnected</string>
     <string name="pc_default_name">Your PC</string>
     <string name="presence_locked">Keyboard/mouse locked</string>
+    <string name="presence_paused">Paused: you are using the PC</string>
     <string name="cd_back">Back</string>
     <string name="cd_copy">Copy</string>
     <string name="copied_toast">Copied</string>
@@ -41,6 +42,7 @@
     <string name="preset_str_f2">Asks for every sensitive action, all deny zones on</string>
     <string name="preset_str_f3">Cloudflare Access required if a tunnel is on</string>
     <string name="preset_use">Use %1$s</string>
+    <string name="wel_pc_preset_wins">After pairing, the PC\'s own preset (set during turbo_hub setup) takes effect.</string>
     <string name="wel_foot">Every item can still be switched on its own in turbo-desktop.toml on the PC</string>
 
     <string name="pair_title">Pair with your PC</string>
@@ -135,6 +137,7 @@
     <string name="dec_deny">denied</string>
     <string name="dec_timeout">timed out (denied)</string>
     <string name="dec_stop">stopped</string>
+    <string name="dec_withdrawn">withdrawn</string>
     <string name="st_done">done</string>
     <string name="st_failed">failed</string>
     <string name="st_stopped">stopped</string>
@@ -221,6 +224,11 @@
     <string name="audit_k_final">Task answer</string>
     <string name="audit_k_appr_req">Approval asked: %1$s</string>
     <string name="audit_k_appr_res">%1$s: %2$s</string>
+    <string name="audit_k_cc_req">Claude Code asked to run: %1$s</string>
+    <string name="audit_k_cc_res">%1$s by %2$s</string>
+    <string name="audit_by_phone">phone</string>
+    <string name="audit_by_pc">PC</string>
+    <string name="audit_by_cc">Claude Code</string>
     <string name="audit_k_stop">Stopped (STOP)</string>
     <string name="audit_k_resume">Resumed</string>
     <string name="audit_k_takeover">Took over</string>
@@ -276,9 +284,14 @@
     <string name="set_url_hint">Hub address (http://…:8750)</string>
     <string name="set_url_add">Add / edit</string>
     <string name="set_access_login">Log in to Cloudflare Access</string>
+    <string name="cf_empty_title">No Cloudflare address is set for this PC.</string>
+    <string name="cf_empty_sub">Add your https://… address under Connection in Settings, then try again.</string>
     <string name="set_wake">Wake the PC</string>
     <string name="set_wake_relay">Relay address (Tailscale)</string>
+    <string name="set_wake_code_hint">6-digit relay pairing code</string>
     <string name="set_wake_pair">Pair the relay (6-digit code)</string>
+    <string name="wake_paired_ok">Relay paired</string>
+    <string name="wake_pair_fail">Could not pair relay: %1$s</string>
     <string name="set_wake_button">Wake the PC</string>
     <string name="set_battery">Stay connected on Xiaomi/HyperOS</string>
     <string name="set_battery_d">Turn off battery optimisation and enable autostart so approval alerts always arrive.</string>
@@ -377,6 +390,7 @@
     <string name="act_web">open</string>
     <string name="act_use_tool">use</string>
     <string name="appr_wants_cc">Claude Code wants to %1$s “%2$s”</string>
+    <string name="appr_source_cc">Claude Code</string>
     <string name="appr_no_timeout">No time limit: waits until you answer (on the phone or the PC)</string>
     <string name="player_quality_title">Sharpness</string>
     <string name="player_quality_eco">Data saver (960 px)</string>

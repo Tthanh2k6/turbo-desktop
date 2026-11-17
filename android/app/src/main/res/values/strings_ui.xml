@@ -12,6 +12,7 @@
     <string name="route_offline">Mất kết nối</string>
     <string name="pc_default_name">Máy tính</string>
     <string name="presence_locked">Đang khoá phím/chuột</string>
+    <string name="presence_paused">Đã tạm dừng: bạn đang dùng máy</string>
     <string name="cd_back">Quay lại</string>
     <string name="cd_copy">Sao chép</string>
     <string name="copied_toast">Đã sao chép</string>
@@ -41,6 +42,7 @@
     <string name="preset_str_f2">Hỏi mọi hành động nhạy cảm, bật đủ vùng cấm</string>
     <string name="preset_str_f3">Cloudflare Access bắt buộc nếu bật tunnel</string>
     <string name="preset_use">Dùng mức %1$s</string>
+    <string name="wel_pc_preset_wins">Sau khi ghép, mức bảo mật đặt trên máy tính (khi chạy turbo_hub setup) sẽ được áp dụng.</string>
     <string name="wel_foot">Từng mục vẫn bật hoặc tắt riêng được trong turbo-desktop.toml trên máy tính</string>
 
     <string name="pair_title">Ghép với máy tính</string>
@@ -138,6 +140,7 @@
     <string name="dec_deny">từ chối</string>
     <string name="dec_timeout">hết giờ (từ chối)</string>
     <string name="dec_stop">dừng</string>
+    <string name="dec_withdrawn">đã rút lại</string>
     <string name="st_done">xong</string>
     <string name="st_failed">lỗi</string>
     <string name="st_stopped">đã dừng</string>
@@ -224,6 +227,11 @@
     <string name="audit_k_final">Kết quả việc</string>
     <string name="audit_k_appr_req">Chờ duyệt: %1$s</string>
     <string name="audit_k_appr_res">%1$s: %2$s</string>
+    <string name="audit_k_cc_req">Claude Code xin chạy: %1$s</string>
+    <string name="audit_k_cc_res">%1$s bởi %2$s</string>
+    <string name="audit_by_phone">điện thoại</string>
+    <string name="audit_by_pc">PC</string>
+    <string name="audit_by_cc">Claude Code</string>
     <string name="audit_k_stop">Đã dừng (STOP)</string>
     <string name="audit_k_resume">Cho chạy lại</string>
     <string name="audit_k_takeover">Lấy lại quyền</string>
@@ -281,9 +289,14 @@
     <string name="set_url_hint">Địa chỉ hub (http://…:8750)</string>
     <string name="set_url_add">Thêm / sửa</string>
     <string name="set_access_login">Đăng nhập Cloudflare Access</string>
+    <string name="cf_empty_title">Chưa có địa chỉ Cloudflare cho máy tính này.</string>
+    <string name="cf_empty_sub">Thêm địa chỉ https://… trong mục Kết nối ở Cài đặt rồi mở lại.</string>
     <string name="set_wake">Đánh thức PC</string>
     <string name="set_wake_relay">Địa chỉ relay (Tailscale)</string>
+    <string name="set_wake_code_hint">Mã ghép relay 6 số</string>
     <string name="set_wake_pair">Ghép relay (mã 6 số)</string>
+    <string name="wake_paired_ok">Đã ghép relay thành công</string>
+    <string name="wake_pair_fail">Không ghép được relay: %1$s</string>
     <string name="set_wake_button">Đánh thức PC</string>
     <string name="set_battery">Giữ kết nối trên Xiaomi/HyperOS</string>
     <string name="set_battery_d">Tắt tối ưu pin và bật tự khởi động để thông báo duyệt luôn tới.</string>
@@ -382,6 +395,7 @@
     <string name="act_web">mở web</string>
     <string name="act_use_tool">dùng công cụ</string>
     <string name="appr_wants_cc">Claude Code muốn %1$s “%2$s”</string>
+    <string name="appr_source_cc">Claude Code</string>
     <string name="appr_no_timeout">Không giới hạn thời gian: chờ đến khi bạn duyệt (trên điện thoại hoặc máy tính)</string>
     <string name="player_quality_title">Độ nét</string>
     <string name="player_quality_eco">Tiết kiệm (960 px)</string>
