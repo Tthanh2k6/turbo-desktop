@@ -6,8 +6,13 @@ Tokens are counted with tiktoken `cl100k_base` for the scripted runs (`tests/fie
 
 | Task | Tool calls | Response chars | ~Tokens | Wall | Success |
 | :--- | ---: | ---: | ---: | ---: | :--- |
-| Form fill in the WinForms fixture (inspect + one batch: 3 fields, select, submit, delta) | 2 | 1,069 | 384 | 2.1 s | yes |
-| Calculator (12.5 + 7) x 3 (launch, inspect, one batch of 10 clicks, read display) | 4 | 1,992 | 714 | 1.9 s | yes (58.5) |
+| (17/11) Form fill in the WinForms fixture (inspect + one batch: 3 fields, select, submit, delta) | 2 | 1,069 | 384 | 2.1 s | yes |
+| (17/11) Calculator (12.5 + 7) x 3 (launch, inspect, one batch of 10 clicks, read display) | 4 | 1,992 | 714 | 1.9 s | yes (58.5) |
+| (18/11, B4) Form fill, same steps; successful batch lists only steps with output | 2 | 1,043 | 377 | 2.0 s | yes |
+| (18/11, B4) Calculator: launch returns the button snapshot, one batch of 10 clicks + read display | 2 | 1,737 | 621 | 1.8 s | yes (58.5) |
+| (18/11, B4) Launch + snapshot of the editor fixture | 1 | 514 | 170 | 0.9 s | yes |
+
+B4 changes behind the new rows: launch_app returns the first snapshot (no separate inspect), keeps watching for a launcher's real window and returns `pending` with a hint instead of an empty list; a successful batch returns `ran=N` and only the steps that carry output; Minimize/Maximize/Close buttons that WinUI apps draw outside a title bar are hidden unless the query asks for them (window_control does those); windows_list is one short line per window; wait_for defaults to 8 s and reports what it saw. Calculator went from 4 calls / 714 tokens to 2 calls / 621 tokens.
 
 ## B. Field runs: a real model (Claude Sonnet through `claude -p`, only desktop-mcp loaded) driving the tools
 

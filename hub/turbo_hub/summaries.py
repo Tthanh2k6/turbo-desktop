@@ -53,6 +53,8 @@ def summary_parts(tool: str | None, inp: dict | None, text: str) -> tuple[str, l
         return ("read_controls", [n]) if n else ("read_window", [])
     if name == "batch_actions" and isinstance(d.get("steps"), list):
         steps = d["steps"]
+        if isinstance(d.get("ran"), int):   # compact success form: only notable steps are listed
+            return "ran_steps", [d["ran"], d["ran"]]
         return "ran_steps", [len(steps), sum(1 for s in steps if s.get("ok"))]
     if name == "screenshot":
         return "screenshot", []

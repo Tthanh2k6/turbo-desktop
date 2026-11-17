@@ -387,16 +387,40 @@ class Desktop:
             self.by_wid[w.wid] = w
         return w
 
-    def windows_list(self, include_denied=True) -> list[dict]:
+    def _own_hwnds(self) -> set[int]:
+        out: set[int] = set()
+        try:
+            out.update(getattr(self.indicator.glow, "hwnds", ()) or ())
+        except Exception:
+            pass
+        for attr in ("banner_hwnd", "ctrl_hwnd"):
+            h = getattr(self.lock, attr, 0)
+            if h:
+                out.add(h)
+        return out
+
+    def windows_list(self, include_denied=True, hidden: bool = False, verbose: bool = True) -> list[dict]:
         fg = win32gui.GetForegroundWindow()
+        own = self._own_hwnds()
+        try:
+            raw = winsys.enum_top_windows(hidden=hidden)
+        except TypeError:
+            raw = winsys.enum_top_windows()
         out = []
-        for t in winsys.enum_top_windows():
+        for t in raw:
+            if not hidden and winsys.is_irrelevant_window(t, own):
+                continue
             name, el = winsys.process_info(t["pid"])
             w = self._win(t["hwnd"])
-            deny = sec.is_denied_window(name, t["title"], t["class"])
+            deny = sec.is_denied_window(name, t["title"], t.get("class"))
             secret = sec.secret_reason(t["title"], name)
-            d = {"id": w.wid, "hwnd": t["hwnd"], "title": sec.HIDDEN_TITLE if secret else t["title"], "process": name,
-                 "pid": t["pid"], "focused": t["hwnd"] == fg}
+            if not include_denied and (deny or secret):
+                continue
+            d = {"id": w.wid, "title": sec.HIDDEN_TITLE if secret else t["title"], "process": name,
+                 "focused": t["hwnd"] == fg}
+            if verbose:
+                d["hwnd"] = t["hwnd"]
+                d["pid"] = t["pid"]
             if secret:
                 d["secret"] = True            # the matched pattern is not shown: it would hint at what the title was
                 d["rule"] = "secret-window"
@@ -408,6 +432,30 @@ class Desktop:
                 d["denied"] = deny
             out.append(d)
         return out
+
+    def format_windows_list(self, verbose: bool = False, hidden: bool = False) -> str:
+        """Compact line format: `w3 Calculator [CalculatorApp] *focused`.
+        Drops hwnd and pid unless verbose=True; skips tool-irrelevant windows unless hidden=True;
+        keeps denied, secret and elevated markers."""
+        rows = self.windows_list(hidden=hidden, verbose=True)
+        own = self._own_hwnds()
+        lines = []
+        for d in rows:
+            if not hidden and winsys.is_irrelevant_window(d, own):
+                continue
+            parts = [f"{d['id']} {d['title']} [{d['process']}]"]
+            if verbose:
+                parts.append(f"pid={d.get('pid')} hwnd={d.get('hwnd')}")
+            if d.get("focused"):
+                parts.append("*focused")
+            if d.get("secret"):
+                parts.append("[secret]")
+            if d.get("denied"):
+                parts.append(f"[denied: {d['denied']}]")
+            if d.get("elevated"):
+                parts.append("[elevated]")
+            lines.append(" ".join(parts))
+        return "\n".join(lines)
 
     def find_window(self, spec) -> dict:
         """spec: 'w3' | hwnd int | title substring | 'process:notepad'."""
@@ -452,6 +500,8 @@ class Desktop:
     # ------------------------------------------------------------ snapshot
 
     def _ctrl_for(self, d):
+        if not win32gui.IsWindow(d["hwnd"]):
+            return None
         return auto.ControlFromHandle(d["hwnd"])
 
     def _facts(self, c, role, mode_all=False):
@@ -505,13 +555,19 @@ class Desktop:
         return name, aid, value, flags, pw
 
     def inspect(self, window, mode="interactive", query=None, only_changed=False, max_chars=6000,
-                max_nodes=700, ocr=None) -> str:
+                max_nodes=700, ocr=None, onlyChanged: bool | None = None, maxChars: int | None = None) -> str:
+        if onlyChanged is not None:
+            only_changed = bool(onlyChanged)
+        if maxChars is not None:
+            max_chars = int(maxChars)
         d = self.find_window(window)
         self._guard_window(d, "inspect")
         w = self._win(d["hwnd"])
+        w_title = fold_text(d.get("title") or "")
         root = self._ctrl_for(d)
-        elements: list[tuple[int, str]] = []  # (n, line-without-ref)
+        elements: list[tuple[int, str, object, str, tuple]] = []  # (n, line-without-ref, parent_key, role, anc_keys)
         sigs: dict[int, str] = {}
+        all_sigs: dict[int, str] = {}
         skipped_off = 0
         count = 0
         q = (query or "").lower()
@@ -526,8 +582,10 @@ class Desktop:
                 return ("rid", tuple(rid))
             return ("path", parent_key, c.ControlTypeName, c.Name, c.AutomationId, idx)
 
-        def walk(c, depth, parent_key, in_titlebar):
+        def walk(c, depth, parent_key, in_titlebar, anc_keys=()):
             nonlocal skipped_off, count
+            if c is None:
+                return
             try:
                 kids = c.GetChildren()
             except Exception:
@@ -542,9 +600,12 @@ class Desktop:
                     ident = (role, ch.Name)
                     idx = idxs[ident] = idxs.get(ident, -1) + 1
                     key = key_for(ch, parent_key, idx)
+                    cur_anc = anc_keys + (key,)
                     show = (mode == "all" and not tb) or (role in INTERACTIVE and not tb) or \
                            (mode == "text" and role == "Text" and not tb)
                     if mode == "all" and tb and role in ("Button",):
+                        show = False
+                    if show and role == "Button" and not tb and _is_caption_button(ch, w_title, q):
                         show = False
                     if show:
                         name, aid, value, flags, pw = self._facts(ch, role)
@@ -573,11 +634,12 @@ class Desktop:
                             line += ' = ""'
                         if flags:
                             line += " " + " ".join(f"[{f}]" for f in flags)
+                        all_sigs[n] = line
                         if not q or q in line.lower() or q in (aid or "").lower():
-                            elements.append((n, line))
+                            elements.append((n, line, parent_key, role, cur_anc))
                             sigs[n] = line
                             count += 1
-                    walk(ch, depth + 1, key, tb)
+                    walk(ch, depth + 1, key, tb, cur_anc)
                 except Exception:
                     continue
 
@@ -585,13 +647,13 @@ class Desktop:
         elapsed_note = ""
         tree_empty = (not seen_keys) or (len(seen_keys) <= 1 and mode != "all")
         ocr_lines = []
-        if tree_empty and ocr is not False:
+        if tree_empty and ocr is not False and (win32gui.IsWindow(d["hwnd"]) or ocr is True):
             try:
                 ocr_lines = self._ocr_window(w, d)
             except Exception as e:
                 elapsed_note = f" ocr-unavailable: {_clip(str(e), 80)}"
 
-        head = f'window {w.wid} "{_clip(d["title"], 60)}" ({d["process"]} pid {d["pid"]})'
+        head = f'window {w.wid} "{_clip(d["title"], 60)}" ({d["process"]} pid {d.get("pid", "?")})'
         if d.get("focused"):
             head += " focused"
         if d.get("elevated"):
@@ -600,7 +662,7 @@ class Desktop:
         removed = []
         prev = w.prev.get(mode)
         if only_changed and prev is not None:
-            for n, line in elements:
+            for n, line, _, _, _ in elements:
                 old = prev.get(n)
                 if old is None:
                     lines.append(f"*[{w.wid}:e{n}] {line}")
@@ -613,10 +675,12 @@ class Desktop:
             unchanged = len(sigs) - sum(1 for l in lines if l[0] in "*~")
             foot = f"-- delta: {sum(1 for l in lines if l[0]=='*')} new, {sum(1 for l in lines if l[0]=='~')} changed, {len(removed)} removed, {max(unchanged, 0)} unchanged"
         else:
-            lines = [f"[{w.wid}:e{n}] {line}" for n, line in elements]
+            lines = [f"[{w.wid}:e{n}] {line}" for n, line, _, _, _ in elements]
             foot = f"-- {len(elements)} elements"
         if not q:
             w.prev[mode] = dict(sigs)
+        elif mode not in w.prev:
+            w.prev[mode] = dict(all_sigs)
         if skipped_off:
             foot += f", {skipped_off} offscreen hidden"
         if count >= max_nodes:
@@ -629,7 +693,18 @@ class Desktop:
             lines.append(ol)
         body = "\n".join(lines)
         if len(body) > max_chars:
-            body = body[:max_chars] + f"\n... truncated at {max_chars} chars (use query= to filter)"
+            if not only_changed and elements:
+                summarised = _summarise_siblings(elements, w.wid, first_n=8)
+                if len(summarised) < len(elements):
+                    lines = summarised + list(ocr_lines)
+                    body = "\n".join(lines)
+            if len(body) > max_chars:
+                # Preserve any sibling summary lines ("... (first 8 shown; use query= to filter)") if still over max_chars
+                sum_lines = [ln for ln in lines if "shown; use query= to filter)" in ln]
+                body = body[:max_chars] + f"\n... truncated at {max_chars} chars (use query= to filter)"
+                for sl in sum_lines:
+                    if sl not in body:
+                        body += "\n" + sl
         return sec.wrap_untrusted(f"{head}\n{body}\n{foot}{elapsed_note}", label=w.wid + " ")
 
     def _ocr_window(self, w: Win, d: dict) -> list[str]:
@@ -861,8 +936,10 @@ class Desktop:
             pass
         return None
 
-    def act(self, window, action="click", ref=None, name=None, role=None, text=None, value=None, keys=None,
-            direction=None, amount=1):
+    def act(self, window=None, action="click", ref=None, name=None, role=None, text=None, value=None, keys=None,
+            direction=None, amount=1, return_snapshot: bool = False, returnSnapshot: bool | None = None):
+        if returnSnapshot is not None:
+            return_snapshot = bool(returnSnapshot)
         self._ind_activity()
         self._note = {}
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
@@ -909,6 +986,11 @@ class Desktop:
             res["approvalId"] = approval
             res["after"] = self._thumb(d, c, "after")
         self.audit.write(event="action", ok=True, via=via, approval_id=approval, **base)
+        if return_snapshot and not res.get("pending"):
+            try:
+                res["snapshot"] = self.inspect(d["id"], only_changed=True)
+            except ToolError as e:
+                res["snapshotError"] = str(e)
         return res
 
     def _thumb(self, d, c, tag):
@@ -1196,21 +1278,32 @@ class Desktop:
 
     # ------------------------------------------------------------ other tools
 
-    def batch(self, steps: list[dict], window=None, return_snapshot=False) -> dict:
+    def batch(self, steps: list[dict], window=None, return_snapshot=False,
+              returnSnapshot: bool | None = None) -> dict:
+        if returnSnapshot is not None:
+            return_snapshot = bool(returnSnapshot)
         self._ind_activity()
         results = []
         failed = None
+        last_win = window
         for i, st in enumerate(steps):
             st = dict(st)
             op = st.pop("op", "act")
             st.setdefault("window", window)
+            if st.get("window"):
+                last_win = st["window"]
+            elif st.get("ref"):
+                try:
+                    last_win = self._parse_ref(st["ref"])[0].wid
+                except Exception:
+                    pass
             try:
                 if op == "act":
                     try:
                         r = self.act(**st)
                     except TypeError as e:   # e.g. an invented field such as "real": say what is valid
                         raise ToolError(f"bad step arguments: {e}. Valid fields: window, ref, name, role, action, text, "
-                                        f"value, keys, direction, amount (plus op)")
+                                        f"value, keys, direction, amount, returnSnapshot (plus op)")
                     results.append({"i": i, **{k: v for k, v in r.items() if k != "after"}})
                 elif op == "wait_for":
                     results.append({"i": i, **self.wait_for(**st)})
@@ -1223,18 +1316,58 @@ class Desktop:
                 results.append({"i": i, "ok": False, "error": str(e), **e.extra})
                 failed = i
                 break
-        out = {"ok": failed is None, "steps": results}
-        if failed is not None:
-            out["failedAt"] = failed
-        if return_snapshot and window:
+        if failed is None:
+            # All steps ran: list only the steps that carry something (a snapshot, a value, a note, real input).
+            plain = lambda r: set(r) <= {"i", "ok", "via"} and r.get("ok") is True and r.get("via") in (None, "pattern")
+            out = {"ok": True, "ran": len(results), "steps": [r for r in results if not plain(r)]}
+        else:
+            out = {"ok": False, "steps": results, "failedAt": failed}
+        snap_win = window or last_win
+        if return_snapshot and snap_win:
             try:
-                out["snapshot"] = self.inspect(window, only_changed=True)
+                out["snapshot"] = self.inspect(snap_win, only_changed=True)
             except ToolError as e:
                 out["snapshotError"] = str(e)
         return out
 
+    def _saw_windows_for(self, window=None, d: dict | None = None, title: str | None = None) -> list[dict]:
+        try:
+            wl = self.windows_list()
+        except Exception:
+            return []
+        if d is not None:
+            proc = (d.get("process") or "").lower()
+            pid = d.get("pid")
+            matched = [w for w in wl if (proc and (w.get("process") or "").lower() == proc) or (pid and w.get("pid") == pid)]
+            if matched:
+                return matched
+        if window is not None:
+            spec = str(window).strip().lower()
+            if spec.startswith("process:"):
+                pname = spec[8:]
+                matched = [w for w in wl if (w.get("process") or "").lower() == pname]
+                if matched:
+                    return matched
+            else:
+                matched = [
+                    w for w in wl
+                    if spec in (w.get("process") or "").lower()
+                    or spec in (w.get("title") or "").lower()
+                    or w.get("id") == spec
+                ]
+                if matched:
+                    return matched
+        if title:
+            low = title.lower()
+            matched = [w for w in wl if low in (w.get("process") or "").lower() or low in (w.get("title") or "").lower()]
+            if matched:
+                return matched
+        return wl
+
     def wait_for(self, window=None, text=None, gone=False, title=None, timeout=8.0, **_):
-        end = time.time() + float(timeout)
+        timeout = 8.0 if timeout is None else float(timeout)
+        end = time.time() + timeout
+        last_d = None
         while True:
             if sec.stop_requested():  # field bug 4: STOP during a long wait was ignored
                 raise ToolError("emergency stop active: wait cancelled", stopped=True)
@@ -1245,6 +1378,7 @@ class Desktop:
             elif window is not None:
                 try:
                     d = self.find_window(window)
+                    last_d = d
                 except ToolError:
                     if gone and not text:
                         return {"ok": True}
@@ -1252,13 +1386,20 @@ class Desktop:
                 if d is not None and text:
                     self._guard_window(d, "inspect")
                     root = self._ctrl_for(d)
-                    ex = root.Control(searchDepth=14, SubName=text).Exists(0, 0)
+                    ex = bool(root and root.Control(searchDepth=14, SubName=text).Exists(0, 0))
                     if ex != bool(gone):
                         return {"ok": True}
                 elif d is not None and not text and not gone:
                     return {"ok": True}
             if time.time() >= end:
-                raise ToolError(f"timeout waiting for {'gone ' if gone else ''}{text or title or window}")
+                seen = self._saw_windows_for(window=window, d=last_d, title=title)
+                titles = [w["title"] for w in seen]
+                seen_desc = ", ".join(f'{w["id"]} "{w["title"]}" [{w["process"]}]' for w in seen) if seen else "none"
+                raise ToolError(
+                    f"timeout waiting for {'gone ' if gone else ''}{text or title or window} (saw: {seen_desc})",
+                    saw=titles,
+                    windows=[{"id": w["id"], "title": w["title"], "process": w["process"]} for w in seen],
+                )
             time.sleep(0.2)
 
     def _clean_launch(self, exe_name, path):
@@ -1276,7 +1417,17 @@ class Desktop:
             return [path, "--new-window", str(d)], f"--new-window on temp folder {d}"
         return None
 
-    def launch(self, target: str, args: str = "", wait=8.0, return_existing: bool = False) -> dict:
+    def launch(self, target: str, args: str = "", wait=8.0, return_existing: bool = False,
+               return_snapshot: bool = True, snapshot_query: str | None = None,
+               snapshot_max_chars: int = 1500, **kw) -> dict:
+        if "returnExisting" in kw:
+            return_existing = bool(kw.pop("returnExisting"))
+        if "returnSnapshot" in kw:
+            return_snapshot = bool(kw.pop("returnSnapshot"))
+        if "snapshotQuery" in kw:
+            snapshot_query = kw.pop("snapshotQuery")
+        if "snapshotMaxChars" in kw:
+            snapshot_max_chars = int(kw.pop("snapshotMaxChars"))
         self._ind_activity()
         t = APP_ALIASES.get(target.lower(), target)
         exe_name = Path(t).stem.lower()
@@ -1316,22 +1467,59 @@ class Desktop:
                 raise ToolError(f"approval denied or timed out: {cls.reason}", approval="deny", rule=cls.rule)
         before_list = self.windows_list()
         before = {d["hwnd"] for d in before_list}
+        proc = None
         try:
             if how in ("start-menu", "appsfolder"):
                 os.startfile(path)
             else:
-                subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
+                proc = subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
         except OSError as e:
             raise ToolError(f"cannot start {t}: {e}")
-        end = time.time() + float(wait)
-        new = []
+        proc_pid = getattr(proc, "pid", None)
+        wait_f = float(wait)
+        step = min(0.25, max(0.02, wait_f / 4))
+
+        def fresh(only_matched: bool) -> list[dict]:
+            ws = [d for d in self.windows_list() if d["hwnd"] not in before]
+            if only_matched:
+                ws = [d for d in ws if _matches_launched_app(d, proc_pid, exe_name, matched, target)]
+            return ws
+
+        def settle(ws: list[dict], only_matched: bool, deadline: float) -> list[dict]:
+            # Let a splash/launcher window hand over to the real one, then re-read.
+            if wait_f >= 0.4:
+                time.sleep(min(0.4, max(0.01, deadline - time.time())))
+                again = fresh(only_matched)
+                if again:
+                    return again
+            return ws
+
+        end = time.time() + wait_f
+        new: list[dict] = []
+        unmatched: list[dict] = []
         while time.time() < end:
-            time.sleep(0.25)
-            new = [d for d in self.windows_list() if d["hwnd"] not in before]
-            if new:
-                time.sleep(0.4)
-                new = [d for d in self.windows_list() if d["hwnd"] not in before]
+            time.sleep(min(step, max(0.01, end - time.time())))
+            cand = fresh(False)
+            mine = [d for d in cand if _matches_launched_app(d, proc_pid, exe_name, matched, target)]
+            if mine:
+                new = settle(mine, True, end)
                 break
+            if cand:
+                unmatched = cand   # some new window, not obviously ours: keep looking for ours until `wait`
+        if not new and unmatched:
+            new = [d for d in fresh(False) if d["hwnd"] in {u["hwnd"] for u in unmatched}] or unmatched
+        if not new:
+            # Apps like Zalo start through a launcher process: keep watching for up to `wait` seconds
+            # for a new top-level window of the launched process or of the resolved app name.
+            end2 = time.time() + wait_f
+            while time.time() < end2:
+                time.sleep(min(step, max(0.01, end2 - time.time())))
+                mine = fresh(True)
+                if mine:
+                    new = settle(mine, True, end2)
+                    break
+        if len(new) > 1:
+            new.sort(key=lambda d: (0 if _matches_launched_app(d, proc_pid, exe_name, matched, target) else 1))
         for d in new:
             self.launched.add(d["hwnd"])
         if not new:
@@ -1348,7 +1536,32 @@ class Desktop:
                     new = reused
         self.audit.write(event="action", ok=bool(new) or bool(extra.get("reused_existing_window")), via="launch",
                          how=how, matched=matched, new_windows=[d["title"] for d in new], **base)
-        return {"ok": True, **extra, "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new]}
+        out: dict = {
+            "ok": True,
+            **extra,
+            "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new],
+        }
+        if new and return_snapshot:
+            try:
+                out["snapshot"] = self.inspect(
+                    new[0]["id"],
+                    "interactive",
+                    query=snapshot_query,
+                    max_chars=int(snapshot_max_chars),
+                )
+            except ToolError as e:
+                out["snapshotError"] = str(e)
+            except Exception as e:
+                out["snapshotError"] = str(e)
+        elif not new:
+            out["pending"] = True
+            if extra.get("reused_existing_window"):
+                out["hint"] = (f"{matched} reused an existing window; pass returnExisting=true or inspect the "
+                               f"existing window directly instead of calling wait_for")
+            else:
+                out["hint"] = (f"{matched} started but no new window appeared yet (launcher or tray app); "
+                               f"do not loop on wait_for—check open windows or pass returnExisting=true")
+        return out
 
     def close_launched(self):
         """Close every window this Desktop launched (matched by window handle, so UWP apps whose process differs
@@ -1432,3 +1645,103 @@ def _clip_keep_nl(s, n):
 
 def wrap_text(s):
     return sec.wrap_untrusted(s, "text ")
+
+
+_CAPTION = ("minimize", "maximize", "restore", "close")
+
+
+def _is_caption_button(ctrl, w_title: str, q: str) -> bool:
+    """Minimize/Maximize/Restore/Close buttons that WinUI apps draw outside a TitleBar ("Close Calculator").
+    window_control does these; hide them from snapshots unless the query asks for one."""
+    try:
+        name = fold_text(ctrl.Name or "")
+    except Exception:
+        return False
+    for c in _CAPTION:
+        if name == c or (w_title and name == f"{c} {w_title}"):
+            return not (q and c in q)
+    return False
+
+
+def _matches_launched_app(d: dict, proc_pid: int | None, exe_name: str, matched: str, target: str) -> bool:
+    """True when window `d` belongs to the launched process (by pid or process name) or resolved app name."""
+    if proc_pid is not None and d.get("pid") == proc_pid:
+        return True
+    cands = set()
+    for raw in (exe_name, Path(matched).stem if matched else "", matched, _clean_query(target)):
+        f = fold_text(raw)
+        for suf in (".exe", ".lnk"):
+            if f.endswith(suf) and len(f) > len(suf):
+                f = f[:-len(suf)].strip()
+        if f:
+            cands.add(f)
+            cands.add(f.replace(" ", ""))
+    w_proc = fold_text(d.get("process") or "")
+    w_proc_ns = w_proc.replace(" ", "")
+    w_title = fold_text(d.get("title") or "")
+    for c in cands:
+        if not c:
+            continue
+        if w_proc and (c == w_proc or c == w_proc_ns or (len(c) >= 3 and (c in w_proc or w_proc in c))):
+            return True
+        if w_title and len(c) >= 2 and c in w_title:
+            return True
+    return False
+
+
+def _summarise_siblings(
+    elements: list[tuple[int, str, object, str, tuple]],
+    wid: str,
+    first_n: int = 8,
+    prefix: str = "",
+) -> list[str]:
+    """Collapse repeated sibling groups (> first_n items with the same parent and role, or consecutive same-role runs)
+    into the first `first_n` items followed by `<Role> ×<total> (first <first_n> shown; use query= to filter)`."""
+    from collections import Counter
+
+    group_counts = Counter((pk, role) for _, _, pk, role, _ in elements)
+    big_groups = {g for g, c in group_counts.items() if c > first_n}
+
+    if big_groups:
+        seen_in_group: dict[tuple[object, str], int] = {}
+        omitted_keys: set[object] = set()
+        out: list[str] = []
+        for n, line, pk, role, anc_keys in elements:
+            if any(k in omitted_keys for k in anc_keys[:-1]):
+                continue
+            g = (pk, role)
+            if g in big_groups:
+                idx = seen_in_group.get(g, 0)
+                seen_in_group[g] = idx + 1
+                if idx < first_n:
+                    out.append(f"{prefix}[{wid}:e{n}] {line}")
+                else:
+                    if anc_keys:
+                        omitted_keys.add(anc_keys[-1])
+                    if idx == first_n:
+                        out.append(f"{role} ×{group_counts[g]} (first {first_n} shown; use query= to filter)")
+            else:
+                out.append(f"{prefix}[{wid}:e{n}] {line}")
+        return out
+
+    # Fallback when each repeated item has its own wrapper parent: collapse consecutive same-role runs > first_n
+    out = []
+    i = 0
+    m = len(elements)
+    while i < m:
+        role = elements[i][3]
+        j = i + 1
+        while j < m and elements[j][3] == role:
+            j += 1
+        run_len = j - i
+        if run_len > first_n:
+            for k in range(i, i + first_n):
+                n, line, _, _, _ = elements[k]
+                out.append(f"{prefix}[{wid}:e{n}] {line}")
+            out.append(f"{role} ×{run_len} (first {first_n} shown; use query= to filter)")
+        else:
+            for k in range(i, j):
+                n, line, _, _, _ = elements[k]
+                out.append(f"{prefix}[{wid}:e{n}] {line}")
+        i = j
+    return out

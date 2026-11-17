@@ -66,22 +66,31 @@ def main():
                 {"action": "toggle", "name": "I agree to terms", "value": "true"},
                 {"action": "click", "name": "Submit"},
             ], window=w, return_snapshot=True))
-            m.ok = "Submitted: Nguyễn Văn An / Vietnam / agree=True" in d.inspect(w, "text", query="Submitted")
+            for _ in range(10):   # the fixture writes its "Submitted" label a moment after the click (not counted)
+                m.ok = "Submitted: Nguyễn Văn An / Vietnam / agree=True" in d.inspect(w, "text", query="Submitted")
+                if m.ok:
+                    break
+                time.sleep(0.2)
     finally:
         p.kill()
-    # 2. Calculator
+    # 2. Calculator (launch returns first snapshot; one batch clicks and reads Display)
     with Meter("Calculator (12.5 + 7) x 3") as m:
-        r = d.launch("calc")
+        r = m.rec(d.launch("calc", snapshot_query="button"))
         w = r["windows"][0]["id"]
-        m.rec(r)
-        m.rec(d.inspect(w, query="button"))  # query keeps it small
         steps = [{"action": "click", "name": n} for n in ("One", "Two", "Decimal separator", "Five", "Plus", "Seven",
                                                           "Equals", "Multiply by", "Three", "Equals")]
-        m.rec(d.batch(steps, window=w))
-        out = m.rec(d.inspect(w, "text", query="Display"))
+        steps.append({"op": "inspect", "mode": "text", "query": "Display", "only_changed": False})
+        b = m.rec(d.batch(steps, window=w))
+        out = b["steps"][-1].get("snapshot", "")
         m.ok = "58.5" in out
         d.window_control(w, "close")
-    # 3. Settings, read only: skipped (would touch the owner's open Settings window)
+    # 3. Launch + snapshot of the editor fixture (single call: launch_app includes first snapshot)
+    try:
+        with Meter("Launch + snapshot (editor fixture)") as m:
+            r = m.rec(d.launch(str(FIX / "turbo_editor.exe")))
+            m.ok = bool(r.get("ok") and r.get("windows") and "Text editor" in r.get("snapshot", ""))
+    finally:
+        d.close_launched()
     for r in rows:
         print("| {} | {} | {} | {} | {} s | {} |".format(r[0], r[1], r[2], r[3], r[4], "yes" if r[5] else "NO"))
 

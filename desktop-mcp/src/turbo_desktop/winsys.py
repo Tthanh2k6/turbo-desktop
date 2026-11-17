@@ -167,26 +167,70 @@ def real_pid_for_window(hwnd) -> int:
     return found[0] if found else pid
 
 
-def enum_top_windows() -> list[dict]:
+def enum_top_windows(hidden: bool = False) -> list[dict]:
     out = []
 
     def cb(hwnd, _):
         if not win32gui.IsWindowVisible(hwnd):
             return True
         title = win32gui.GetWindowText(hwnd)
-        if not title or title in ("Program Manager",):
+        if not title:
             return True
+        cls = win32gui.GetClassName(hwnd)
+        cloaked = is_cloaked(hwnd)
         ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-        if ex & win32con.WS_EX_TOOLWINDOW and not ex & win32con.WS_EX_APPWINDOW:
-            return True
-        if is_cloaked(hwnd):
-            return True
+        rect = None
+        try:
+            if not win32gui.IsIconic(hwnd):
+                rect = win32gui.GetWindowRect(hwnd)
+        except Exception:
+            rect = None
+        item = {"hwnd": hwnd, "title": title, "class": cls, "cloaked": cloaked}
+        if rect is not None:
+            item["rect"] = rect
+            item["width"] = rect[2] - rect[0]
+            item["height"] = rect[3] - rect[1]
+        if not hidden:
+            if ex & win32con.WS_EX_TOOLWINDOW and not ex & win32con.WS_EX_APPWINDOW:
+                return True
+            if is_irrelevant_window(item):
+                return True
         pid = real_pid_for_window(hwnd)
-        out.append({"hwnd": hwnd, "title": title, "pid": pid, "class": win32gui.GetClassName(hwnd)})
+        out.append({"hwnd": hwnd, "title": title, "pid": pid, "class": cls})
         return True
 
     win32gui.EnumWindows(cb, None)
     return out
+
+
+IRRELEVANT_CLASSES = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "Progman", "WorkerW"}
+OWN_CLASS_PREFIXES = ("TurboDesktopGlow", "TurboDesktopBanner")
+OWN_TITLES = {"turbo-desktop glow", "turbo-desktop-ctrl"}
+
+
+def is_irrelevant_window(t: dict, own_hwnds=()) -> bool:
+    """True for tool-irrelevant windows: cloaked, zero-size, shell tray, and desktop-mcp's own glow/banner windows."""
+    hwnd = t.get("hwnd")
+    if hwnd and hwnd in own_hwnds:
+        return True
+    title = (t.get("title") or "").strip()
+    cls = (t.get("class") or "").strip()
+    if not title or title == "Program Manager":
+        return True
+    if cls in IRRELEVANT_CLASSES:
+        return True
+    if cls.startswith(OWN_CLASS_PREFIXES) or title in OWN_TITLES:
+        return True
+    if title == "turbo-desktop" and cls.startswith("TurboDesktop"):
+        return True
+    if t.get("cloaked"):
+        return True
+    if ("width" in t or "height" in t) and (t.get("width", 1) <= 0 or t.get("height", 1) <= 0):
+        return True
+    rect = t.get("rect")
+    if rect is not None and len(rect) == 4 and ((rect[2] - rect[0]) <= 0 or (rect[3] - rect[1]) <= 0):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------- screenshots

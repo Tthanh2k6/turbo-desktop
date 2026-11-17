@@ -422,6 +422,8 @@ def test_tool_result_summaries():
     assert out.count("\n") <= 1 and len(out) <= 165 and out.endswith("…")
     batch = json.dumps({"result": json.dumps({"ok": True, "steps": [{"ok": True}, {"ok": True}]})})
     assert summarize("mcp__desktop__batch_actions", {}, batch) == "Ran 2 steps (2 ok)"
+    compact = json.dumps({"result": json.dumps({"ok": True, "ran": 11, "steps": [{"i": 10, "ok": True, "snapshot": "x"}]})})
+    assert summarize("mcp__desktop__batch_actions", {}, compact) == "Ran 11 steps (11 ok)"
 
 
 def test_live_usage_is_deduplicated_and_indicator_is_derived(tmp_path):
@@ -493,6 +495,8 @@ def test_lock_wrapper_child_is_not_blocked_by_its_parent(tmp_path, monkeypatch):
 def test_claude_command_operator_prompt_and_model():
     from turbo_hub.runners import OPERATOR_PROMPT
     assert "Close any window you opened only to look for something before you finish." in OPERATOR_PROMPT
+    assert "launch_app" in OPERATOR_PROMPT and "batch_actions" in OPERATOR_PROMPT
+    assert "returnSnapshot" in OPERATOR_PROMPT and "query=" in OPERATOR_PROMPT and "windows_list" in OPERATOR_PROMPT
     cmd = build_claude_command("claude", "cfg.json")
     assert cmd[cmd.index("--append-system-prompt") + 1] == OPERATOR_PROMPT
     assert "--model" not in cmd
@@ -501,6 +505,50 @@ def test_claude_command_operator_prompt_and_model():
     assert "--append-system-prompt" not in build_claude_command("claude", "cfg.json", system_prompt="")
     custom = build_claude_command("claude", "cfg.json", ["a", "{mcp_config}"], system_prompt="x", model="m")
     assert custom == ["a", "cfg.json"]   # a custom template only gets what it asks for via placeholders
+
+
+def test_claude_runner_spawn_env_disables_tool_search_by_default(monkeypatch):
+    from turbo_hub import runners
+
+    # 1) When ENABLE_TOOL_SEARCH is not set, ClaudeRunner passes ENABLE_TOOL_SEARCH=false merged with existing env
+    monkeypatch.delenv("ENABLE_TOOL_SEARCH", raising=False)
+    monkeypatch.setenv("TURBO_EXISTING_MARKER", "kept")
+    captured_envs = []
+
+    async def spawn_with_env(cmd, env=None):
+        captured_envs.append(env)
+        return FakeProc([[RESULT]])
+
+    async def emit(_):
+        pass
+
+    async def gate(_):
+        return True
+
+    r = ClaudeRunner("http://127.0.0.1:1", "tok", claude_path="claude", spawn=spawn_with_env)
+    assert asyncio.run(r.run("t1", "hi", emit, gate)) == "done"
+    assert len(captured_envs) == 1
+    assert captured_envs[0]["ENABLE_TOOL_SEARCH"] == "false"
+    assert captured_envs[0]["TURBO_EXISTING_MARKER"] == "kept"
+
+    # 2) When the user explicitly sets ENABLE_TOOL_SEARCH, their value is preserved
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "true")
+    r2 = ClaudeRunner("http://127.0.0.1:1", "tok", claude_path="claude", spawn=spawn_with_env)
+    assert asyncio.run(r2.run("t2", "hi", emit, gate)) == "done"
+    assert captured_envs[-1]["ENABLE_TOOL_SEARCH"] == "true"
+
+    # 3) _spawn_real passes the merged env into asyncio.create_subprocess_exec
+    monkeypatch.delenv("ENABLE_TOOL_SEARCH", raising=False)
+    exec_kwargs = {}
+
+    async def fake_exec(*args, **kwargs):
+        exec_kwargs.update(kwargs)
+        return FakeProc([[RESULT]])
+
+    monkeypatch.setattr(runners.asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(runners._spawn_real(["claude", "-p"]))
+    assert exec_kwargs["env"]["ENABLE_TOOL_SEARCH"] == "false"
+    assert exec_kwargs["env"]["TURBO_EXISTING_MARKER"] == "kept"
 
 
 def test_task_active_heartbeat_and_owner_took_over(tmp_path):

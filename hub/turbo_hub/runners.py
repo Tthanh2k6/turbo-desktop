@@ -187,7 +187,10 @@ OPERATOR_PROMPT = (
     "You are not that other assistant: never decide a task is already done because it mentions Claude. "
     "Only touch what the task needs. Close any window you opened only to look for something before you finish. "
     "If the request is genuinely ambiguous or risky, ask one short question instead "
-    "of guessing. When done, reply in the owner's language in 1-3 short sentences: what you did and what you saw.")
+    "of guessing. When done, reply in the owner's language in 1-3 short sentences: what you did and what you saw. "
+    "Efficiency rules: (1) launch_app already returns the window and its first snapshot—do not inspect again or call "
+    "wait_for after launching; (2) chain steps in one batch_actions call with returnSnapshot=true to read the delta; "
+    "(3) use query= on large windows and do not call windows_list when you already know the window id.")
 
 
 def build_claude_command(claude: str, mcp_config_path: str, template: list[str] | None = None,
@@ -213,10 +216,23 @@ def user_frame(text: str) -> bytes:
     return (json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n").encode()
 
 
-async def _spawn_real(cmd: list[str]):
+def build_claude_env(base_env: dict | None = None) -> dict[str, str]:
+    """Merge the existing environment and set ENABLE_TOOL_SEARCH=false unless the user already set it."""
+    env = dict(os.environ)
+    if base_env:
+        for k, v in base_env.items():
+            if k != "ENABLE_TOOL_SEARCH" or "ENABLE_TOOL_SEARCH" not in env:
+                env[k] = str(v)
+    env.setdefault("ENABLE_TOOL_SEARCH", "false")
+    return env
+
+
+async def _spawn_real(cmd: list[str], env: dict | None = None):
     # screenshots arrive as one huge JSON line: the default 64 KB line limit made the runner crash (field bug)
+    proc_env = build_claude_env(env)
     return await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.DEVNULL, limit=64 * 1024 * 1024)
+                                                stderr=asyncio.subprocess.DEVNULL, limit=64 * 1024 * 1024,
+                                                env=proc_env)
 
 
 class ClaudeRunner:
@@ -237,6 +253,7 @@ class ClaudeRunner:
         self.claude_path = claude_path or find_claude()
         self.spawn = spawn or _spawn_real
         self.proc = None
+        self.last_env: dict[str, str] | None = None
         self._calls: dict = {}
         self.spawn_count = 0
 
@@ -256,8 +273,16 @@ class ClaudeRunner:
 
     async def _ensure(self):
         if self.proc is None or self.proc.returncode is not None:
-            self.proc = await self.spawn(build_claude_command(self.claude_path or "claude", self.write_mcp_config(), self.command,
-                                                         self.system_prompt, self.model))
+            import inspect
+            cmd = build_claude_command(self.claude_path or "claude", self.write_mcp_config(), self.command,
+                                       self.system_prompt, self.model)
+            proc_env = build_claude_env(self.server_env)
+            self.last_env = proc_env
+            params = inspect.signature(self.spawn).parameters
+            if "env" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()) or len(params) >= 2:
+                self.proc = await self.spawn(cmd, env=proc_env)
+            else:
+                self.proc = await self.spawn(cmd)
             self.spawn_count += 1
             if getattr(self.proc, "pid", None) and self.spawn is _spawn_real:
                 from . import reaper
