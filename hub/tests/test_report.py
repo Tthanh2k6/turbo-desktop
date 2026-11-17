@@ -26,8 +26,8 @@ def test_report_empty(env):
         "seconds": 0,
         "tokensIn": 0,
         "tokensOut": 0,
-        "cache_read": 0,
-        "cache_create": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0,
         "costUsd": 0.0,
     }
     assert body["topApps"] == []
@@ -75,8 +75,8 @@ def test_report_two_tasks_on_two_days_and_persistence(tmp_path):
             "seconds": 65,
             "tokensIn": 1000,
             "tokensOut": 200,
-            "cache_read": 0,
-            "cache_create": 0,
+            "cacheRead": 0,
+            "cacheCreate": 0,
             "costUsd": 0.01,
         }
 
@@ -89,8 +89,8 @@ def test_report_two_tasks_on_two_days_and_persistence(tmp_path):
             "seconds": 25,
             "tokensIn": 0,
             "tokensOut": 0,
-            "cache_read": 0,
-            "cache_create": 0,
+            "cacheRead": 0,
+            "cacheCreate": 0,
             "costUsd": 0.0,
         }
 
