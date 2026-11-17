@@ -251,6 +251,7 @@ class TaskManager:
         records = self._read_tasks_file()
         rec = {
             "id": task.id,
+            "text": task.text[:500],
             "start": round(task.started_at, 3),
             "end": round(task.finished_at if task.finished_at is not None else self.clock(), 3),
             "status": task.status,
@@ -261,6 +262,18 @@ class TaskManager:
         cutoff = self.clock() - TASK_RETENTION_DAYS * 86400
         records = [r for r in records if float(r.get("end") or r.get("start") or 0.0) >= cutoff]
         self._write_tasks_file(records)
+
+    def history(self, limit: int = 50) -> list[dict]:
+        """Recent tasks for the phone: the ones in memory plus finished ones from tasks.jsonl (survives a hub restart)."""
+        out = {t.id: {"id": t.id, "text": t.text, "status": t.status, "startedAt": int(t.started_at),
+                      "finishedAt": int(t.finished_at) if t.finished_at else None} for t in self.tasks.values()}
+        for r in self._read_tasks_file():
+            rid = r.get("id")
+            if isinstance(rid, str) and rid and rid not in out and r.get("text"):
+                out[rid] = {"id": rid, "text": r["text"], "status": r.get("status", "done"),
+                            "startedAt": int(float(r.get("start") or 0)),
+                            "finishedAt": int(float(r["end"])) if r.get("end") else None}
+        return sorted(out.values(), key=lambda x: -x["startedAt"])[:limit]
 
     def report(self, days: int = 7) -> dict:
         now = self.clock()

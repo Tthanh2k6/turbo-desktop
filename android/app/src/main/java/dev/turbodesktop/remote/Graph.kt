@@ -170,6 +170,7 @@ object Graph {
     }
 
     private fun applyHubMeta(j: JSONObject) {
+        j.optString("pcName").takeIf { it.isNotBlank() && it != "null" }?.let { if (it != prefs.pcName) prefs.pcName = it }
         HubJson.screenView(j)?.let { sv ->
             screenViewEnabled.value = sv.enabled
             screenViewMaxFps.value = sv.maxFps

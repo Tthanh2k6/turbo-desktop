@@ -83,11 +83,11 @@ def test_screen_off_in_strict_and_exposed_in_policy_and_status(tmp_path):
         d = DevClient(http, hub_pub=info["hubKey"])
         assert d.pair(info["code"]).status_code == 200
         pol = d.request("GET", "/policy").json()
-        assert pol["screenView"] == {"enabled": False, "maxFps": 2}
+        assert pol["screenView"] == {"enabled": False, "maxFps": 5}
         assert pol["lockRemoteTask"] == "whole_task"
         assert d.start_session(hub.store.totp_secret).status_code == 200
         st = d.request("GET", "/status").json()
-        assert st["screenView"] == {"enabled": False, "maxFps": 2}
+        assert st["screenView"] == {"enabled": False, "maxFps": 5}
         assert st["lockRemoteTask"] == "whole_task"
         r = d.request("GET", "/screen.jpg")
         assert r.status_code == 403 and "screen view is off" in r.text

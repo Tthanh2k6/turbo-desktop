@@ -105,6 +105,9 @@ class State:
     bridge: DesktopBridge | None = None
 
 
+PC_NAME = (__import__("socket").gethostname() or "").split(".")[0]
+
+
 def create_app(settings: Settings) -> FastAPI:
     store = SecretStore(settings.data_dir)
     audit = AuditLog(settings.data_dir / "audit.jsonl")
@@ -479,7 +482,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/policy")
     async def get_policy(ctx: Ctx = Depends(signed)):
         """What the app must ask for before it can open a session (no session needed)."""
-        return reply(ctx, {"preset": settings.policy.get("preset", ""),
+        return reply(ctx, {"preset": settings.policy.get("preset", ""), "pcName": PC_NAME,
                            "needs": {"totp": settings.totp_required, "biometric": settings.biometric_required},
                            "sessionHours": settings.policy.get("sessionHours", settings.session_ttl / 3600),
                            "screenView": screen_view_cfg(),
@@ -528,7 +531,7 @@ def create_app(settings: Settings) -> FastAPI:
         sv = screen_view_cfg()
         lrt = lock_remote_task_cfg()
         pol = {**settings.policy, "screenView": sv, "lockRemoteTask": lrt}
-        return reply(ctx, {"stopped": manager.stopped, "running": t.id if t else None,
+        return reply(ctx, {"stopped": manager.stopped, "running": t.id if t else None, "pcName": PC_NAME,
                            "paused": manager.paused, "policy": pol,
                            "screenView": sv, "lockRemoteTask": lrt,
                            "inputLock": manager.input_lock, "indicator": manager.indicator,
@@ -592,9 +595,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/tasks")
     async def get_tasks(ctx: Ctx = Depends(in_session)):
-        return reply(ctx, [{"id": t.id, "text": t.text, "status": t.status, "startedAt": int(t.started_at),
-                            "finishedAt": int(t.finished_at) if t.finished_at else None}
-                           for t in sorted(manager.tasks.values(), key=lambda x: -x.started_at)][:50])
+        return reply(ctx, manager.history(50))
 
     # ------------------------------------------------------------ events
     @app.get("/events/poll")

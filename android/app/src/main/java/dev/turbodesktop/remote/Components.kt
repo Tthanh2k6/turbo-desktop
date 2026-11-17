@@ -113,6 +113,7 @@ fun routeName(v: String): String = when (v.lowercase()) {
 }
 
 fun pcDisplayName(ctx: Context): String {
+    (try { Graph.prefs.pcName } catch (_: Exception) { "" }).takeIf { it.isNotBlank() }?.let { return it }
     val urls = try { Graph.prefs.urls } catch (_: Exception) { emptyList() }
     val active = try { Graph.prefs.activePath } catch (_: Exception) { "" }
     val chosen = urls.firstOrNull { it.first == active }?.second ?: urls.firstOrNull()?.second.orEmpty()

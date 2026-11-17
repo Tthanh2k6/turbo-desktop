@@ -184,3 +184,17 @@ def test_report_requires_session(env):
     with_session = env.session_client()
     r = with_session.request("GET", "/report?days=7")
     assert r.status_code == 200
+
+
+def test_history_survives_restart(tmp_path):
+    with Env(tmp_path) as env:
+        d = env.session_client()
+        assert d.request("POST", "/tasks", {"text": "first day task"}).status_code == 200
+        ev = env.wait_event(d, lambda e: e["type"] == "approval_request")
+        assert d.request("POST", f"/approvals/{ev['approval_id']}", {"decision": "allow"}, strong=True).status_code == 200
+        env.wait_event(d, lambda e: e["type"] == "task_finished")
+        env.hub.manager.tasks.clear()   # what a hub restart loses
+        hist = d.request("GET", "/tasks").json()
+        assert hist and hist[0]["text"] == "first day task" and hist[0]["status"] == "done"
+        st = d.request("GET", "/status").json()
+        assert isinstance(st.get("pcName"), str)
