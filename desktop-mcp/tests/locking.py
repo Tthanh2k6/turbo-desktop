@@ -1,6 +1,7 @@
 """Shared machine-wide lock so two agents never run UI tests / field runs at the same time.
 Lock file: %TEMP%\\turbo-desktop-test.lock (os.open O_CREAT|O_EXCL). Holder info: agent name, pid, start time."""
 import ctypes
+from ctypes import wintypes
 import json
 import os
 import tempfile
@@ -8,15 +9,26 @@ import time
 
 LOCK = os.path.join(tempfile.gettempdir(), "turbo-desktop-test.lock")
 
+k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+k32.OpenProcess.restype = wintypes.HANDLE
+k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+k32.GetExitCodeProcess.restype = wintypes.BOOL
+k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+k32.CloseHandle.restype = wintypes.BOOL
+k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
 
 def pid_alive(pid: int) -> bool:
-    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+    h = k32.OpenProcess(0x1000, False, int(pid))
     if not h:
         return False
-    code = ctypes.c_ulong()
-    ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
-    ctypes.windll.kernel32.CloseHandle(h)
-    return code.value == 259  # STILL_ACTIVE
+    try:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+            return False
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        k32.CloseHandle(h)
 
 
 def acquire(agent="desktop-mcp", poll=30, owner_pid=None, log=print):

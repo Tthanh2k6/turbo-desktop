@@ -127,8 +127,10 @@ def is_denied_window(process: str | None, title: str | None, class_name: str | N
     return None
 
 
-# Dialogs that ask the OWNER to approve something an AI wants to do (hub/scripts/cc_permission_hook.py).
-OWNER_APPROVAL_TITLES = {"claude code cần duyệt", "claude code needs approval"}
+PROMPT_TITLE = "turbo-desktop: approve action?"
+
+# Dialogs that ask the OWNER to approve something an AI wants to do (hub/scripts/cc_permission_hook.py and local_prompt).
+OWNER_APPROVAL_TITLES = {"claude code cần duyệt", "claude code needs approval", PROMPT_TITLE.lower()}
 
 
 def classify_action(*, process: str | None, window_title: str | None, control_name: str | None = None,
@@ -146,6 +148,10 @@ def classify_action(*, process: str | None, window_title: str | None, control_na
         return Classification("deny", "password-field", "password field: never read, never typed (use $secret:NAME)")
     if class_name == "Credential Dialog Xaml Host":
         return Classification("deny", "credential-dialog", "Windows credential prompt")
+    if (window_title and window_title.strip().lower() in OWNER_APPROVAL_TITLES) or (
+        dialog_title and dialog_title.strip().lower() in OWNER_APPROVAL_TITLES
+    ):
+        return Classification("deny", "owner-approval", "an approval prompt only the owner may answer")
     return _rules.decide({
         "process": process, "title": window_title, "name": control_name, "role": control_role, "action": action,
         "keys": keys, "dialog_title": dialog_title, "dialog_text": dialog_text, "context": window_context,
@@ -253,9 +259,6 @@ def approver_connected(max_age: float = 15.0) -> bool:
         return time.time() - f.stat().st_mtime < max_age
     except OSError:
         return False
-
-
-PROMPT_TITLE = "turbo-desktop: approve action?"
 
 
 def local_prompt(summary: dict, timeout: float = 120.0) -> bool:

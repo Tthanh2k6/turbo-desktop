@@ -65,12 +65,14 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
     """Merge: user rules first (they win), then default rules of the chosen preset, with per-rule overrides."""
     user = user or {}
     section = user.get("desktop", user)
-    chosen = (preset or os.environ.get("TURBO_DESKTOP_PRESET") or section.get("preset") or "easy").lower()
+    user_preset = section.get("preset") or user.get("preset")
+    chosen = (preset or os.environ.get("TURBO_DESKTOP_PRESET") or user_preset or "easy").lower()
     if chosen not in PRESETS:
         chosen = "easy"
-    overrides = section.get("overrides", {})
+    overrides = {**user.get("overrides", {}), **section.get("overrides", {})}
     rules = []
-    for r in section.get("rules", []):
+    user_rules = section.get("rules") if "rules" in section else user.get("rules", [])
+    for r in user_rules:
         rules.append({"presets": list(PRESETS), **r, "id": r.get("id", "user-rule")})
     for r in default.get("rules", []):
         if chosen not in r.get("presets", PRESETS):
@@ -80,17 +82,22 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
             continue
         rules.append({**r, **({"level": ov["level"]} if "level" in ov else {})})
     allow = {a.lower() for a in default.get("apps", {}).get("allowlist", [])}
-    allow |= {a.lower() for a in section.get("apps", {}).get("allowlist", [])}
+    for apps_sec in (user.get("apps", {}), section.get("apps", {})):
+        allow |= {a.lower() for a in apps_sec.get("allowlist", [])}
     sr = {a.lower() for a in default.get("apps", {}).get("session_restore", {}).get("processes", [])}
-    sr |= {a.lower() for a in section.get("apps", {}).get("session_restore", {}).get("processes", [])}
-    il_def, il_user = default.get("input_lock", {}), section.get("input_lock", {})
+    for apps_sec in (user.get("apps", {}), section.get("apps", {})):
+        sr |= {a.lower() for a in apps_sec.get("session_restore", {}).get("processes", [])}
+    il_def = default.get("input_lock", {})
+    il_user = {**user.get("input_lock", {}), **section.get("input_lock", {})}
     mode = il_user.get("mode") or il_def.get("mode", {}).get(chosen, "real_input")
     if mode not in ("off", "real_input", "whole_task"):
         mode = il_def.get("mode", {}).get(chosen, "real_input")
     secs = il_user.get("max_seconds", il_def.get("max_seconds", 60))
     rs = RuleSet(chosen, rules, allow, sr)
-    rs.secret_patterns = [str(x) for x in section.get("secrets", {}).get("patterns", [])]   # additions only
-    ind_def, ind_user = default.get("indicator", {}), section.get("indicator", {})
+    secrets_sec = section.get("secrets") or user.get("secrets") or {}
+    rs.secret_patterns = [str(x) for x in secrets_sec.get("patterns", [])]   # additions only
+    ind_def = default.get("indicator", {})
+    ind_user = {**user.get("indicator", {}), **section.get("indicator", {})}
     rs.indicator = {"border": bool(ind_user.get("border", ind_def.get("border", True))),
                     "color": str(ind_user.get("color", ind_def.get("color", "#E0461D")))}
     rs.input_lock = {"mode": mode, "max_seconds": max(5, min(300, float(secs)))}
@@ -114,15 +121,59 @@ def load_ruleset(preset: str | None = None, config_path=None) -> RuleSet:
 
 # ---------------------------------------------------------------- matching
 
+DISPLAY_PROCESS_ALIASES = {
+    "windowspowershell": "powershell",
+    "windowspowershellx86": "powershell",
+    "windowspowershellise": "powershell",
+    "powershell7": "pwsh",
+    "registryeditor": "regedit",
+    "commandprompt": "cmd",
+    "windowsterminal": "windowsterminal",
+    "taskmanager": "taskmgr",
+    "taskscheduler": "taskschd",
+    "localgrouppolicyeditor": "gpedit",
+    "editgrouppolicy": "gpedit",
+    "eventviewer": "mmc",
+    "computermanagement": "mmc",
+    "devicemanager": "mmc",
+    "services": "mmc",
+    "googlechrome": "chrome",
+    "microsoftedge": "msedge",
+    "visualstudiocode": "code",
+    "vscode": "code",
+    "microsoftword": "winword",
+    "word": "winword",
+    "microsoftexcel": "excel",
+    "excel": "excel",
+    "windowssecurity": "securityhealthui",
+    "calculator": "calc",
+    "paint": "mspaint",
+    "fileexplorer": "explorer",
+}
+
+
+def fold_process_name(name: str | None) -> str:
+    s = (name or "").strip().lower()
+    for suf in (".exe", ".lnk"):
+        if s.endswith(suf) and len(s) > len(suf):
+            s = s[:-len(suf)].strip()
+    return re.sub(r"[\s()]+", "", s)
+
+
 def _rx(pattern, text) -> bool:
     return bool(re.search(pattern, text or "", re.I))
 
 
 def rule_matches(r: dict, ctx: dict, allowlist: set) -> bool:
-    proc = (ctx.get("process") or "").lower().removesuffix(".exe")
+    raw_proc = (ctx.get("process") or "").lower().removesuffix(".exe")
+    folded_proc = fold_process_name(ctx.get("process"))
+    mapped_proc = DISPLAY_PROCESS_ALIASES.get(folded_proc, folded_proc)
+    proc_cands = {raw_proc, folded_proc, mapped_proc} - {""}
     action = ctx.get("action", "click")
-    if "process" in r and proc not in {p.lower() for p in r["process"]}:
-        return False
+    if "process" in r:
+        rule_procs = {p.lower().removesuffix(".exe") for p in r["process"]} | {fold_process_name(p) for p in r["process"]}
+        if not (proc_cands & rule_procs):
+            return False
     if "action" in r and action not in r["action"]:
         return False
     if r.get("level") != "deny" and action in READ_ONLY_ACTIONS and not r.get("include_read"):
@@ -149,7 +200,7 @@ def rule_matches(r: dict, ctx: dict, allowlist: set) -> bool:
         return False
     if "session_restore" in r and bool(ctx.get("session_restore")) != r["session_restore"]:
         return False
-    if r.get("not_allowlisted") and proc in allowlist:
+    if r.get("not_allowlisted") and (proc_cands & allowlist):
         return False
     return True
 

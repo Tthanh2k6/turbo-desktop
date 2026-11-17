@@ -220,3 +220,16 @@ def test_rapid_reacquire_inside_the_end_notice_does_not_crash():
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, (r.returncode, r.stderr[-300:])
     assert r.stdout.strip() == "ok False 0"
+
+
+def test_linger_per_mode_and_max_seconds_cap():
+    assert il.linger_for_mode(False) == 8.0
+    assert il.linger_for_mode(True) == 45.0
+    lock = il.InputLock()
+    assert lock.mode == "real_input" and lock.linger == 8.0
+    lock.set_mode(True)
+    assert lock.whole_task is True and lock.mode == "whole_task" and lock.linger == 45.0
+    lock.set_mode(False)
+    assert lock.whole_task is False and lock.mode == "real_input" and lock.linger == 8.0
+    lock_wt = il.InputLock(whole_task=True)
+    assert lock_wt.linger == 45.0 and lock_wt.max_seconds == 60.0

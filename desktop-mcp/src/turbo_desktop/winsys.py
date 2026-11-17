@@ -18,16 +18,33 @@ k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 adv = ctypes.WinDLL("advapi32", use_last_error=True)
 dwm = ctypes.WinDLL("dwmapi")
+sh32 = ctypes.WinDLL("shell32", use_last_error=True)
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 TOKEN_QUERY = 0x0008
 
 k32.OpenProcess.restype = wintypes.HANDLE
 k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+k32.CloseHandle.restype = wintypes.BOOL
 k32.CloseHandle.argtypes = [wintypes.HANDLE]
+k32.GetTickCount.restype = wintypes.DWORD
+k32.GetTickCount.argtypes = []
+adv.OpenProcessToken.restype = wintypes.BOOL
 adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+adv.GetTokenInformation.restype = wintypes.BOOL
 adv.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+sh32.IsUserAnAdmin.restype = wintypes.BOOL
+sh32.IsUserAnAdmin.argtypes = []
+u32.OpenInputDesktop.restype = wintypes.HANDLE
+u32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+u32.CloseDesktop.restype = wintypes.BOOL
+u32.CloseDesktop.argtypes = [wintypes.HANDLE]
+u32.PrintWindow.restype = wintypes.BOOL
+u32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+dwm.DwmGetWindowAttribute.restype = ctypes.c_long
+dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
 
 
 def process_info(pid: int) -> tuple[str, bool | None]:
@@ -61,7 +78,7 @@ def process_info(pid: int) -> tuple[str, bool | None]:
 
 def we_are_admin() -> bool:
     try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        return bool(sh32.IsUserAnAdmin())
     except Exception:
         return False
 
@@ -79,6 +96,10 @@ class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
 
 
+u32.GetLastInputInfo.restype = wintypes.BOOL
+u32.GetLastInputInfo.argtypes = [ctypes.POINTER(LASTINPUTINFO)]
+
+
 def idle_seconds() -> float:
     lii = LASTINPUTINFO()
     lii.cbSize = ctypes.sizeof(lii)
@@ -89,6 +110,10 @@ def idle_seconds() -> float:
 class SYSTEM_POWER_STATUS(ctypes.Structure):
     _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte), ("BatteryLifePercent", ctypes.c_ubyte),
                 ("SystemStatusFlag", ctypes.c_ubyte), ("BatteryLifeTime", wintypes.DWORD), ("BatteryFullLifeTime", wintypes.DWORD)]
+
+
+k32.GetSystemPowerStatus.restype = wintypes.BOOL
+k32.GetSystemPowerStatus.argtypes = [ctypes.POINTER(SYSTEM_POWER_STATUS)]
 
 
 def _process_names() -> set[str]:
@@ -104,7 +129,6 @@ def _process_names() -> set[str]:
 
 def secure_desktop_active() -> bool:
     """True when the input desktop is not the user's (UAC prompt or lock screen)."""
-    u32.OpenInputDesktop.restype = wintypes.HANDLE
     h = u32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
     if not h:
         return True
@@ -242,6 +266,7 @@ def capture_window(hwnd):
 
     l, t, r, b = win32gui.GetWindowRect(hwnd)
     w, h = max(r - l, 1), max(b - t, 1)
+    hdc = src = mem = bmp = None
     try:
         hdc = win32gui.GetWindowDC(hwnd)
         src = win32ui.CreateDCFromHandle(hdc)
@@ -253,12 +278,33 @@ def capture_window(hwnd):
         info = bmp.GetInfo()
         bits = bmp.GetBitmapBits(True)
         img = Image.frombuffer("RGB", (info["bmWidth"], info["bmHeight"]), bits, "raw", "BGRX", 0, 1)
-        mem.DeleteDC(); src.DeleteDC()
-        win32gui.ReleaseDC(hwnd, hdc); win32gui.DeleteObject(bmp.GetHandle())
         if ok:
             return img, (l, t)
     except Exception:
         pass
+    finally:
+        if mem is not None:
+            try:
+                mem.DeleteDC()
+            except Exception:
+                pass
+        if src is not None:
+            try:
+                src.DeleteDC()
+            except Exception:
+                pass
+        if hdc is not None:
+            try:
+                win32gui.ReleaseDC(hwnd, hdc)
+            except Exception:
+                pass
+        if bmp is not None:
+            try:
+                handle = bmp.GetHandle()
+                if handle:
+                    win32gui.DeleteObject(handle)
+            except Exception:
+                pass
     return ImageGrab.grab(bbox=(l, t, r, b), all_screens=True), (l, t)
 
 

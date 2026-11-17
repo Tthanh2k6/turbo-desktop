@@ -173,6 +173,14 @@ WM_SCREEN_VIEW = WM_APP + 3
 HWND_MESSAGE = wintypes.HWND(-3)
 
 
+REAL_INPUT_LINGER = 8.0
+WHOLE_TASK_LINGER = 45.0
+
+
+def linger_for_mode(whole_task: bool) -> float:
+    return WHOLE_TASK_LINGER if whole_task else REAL_INPUT_LINGER
+
+
 class InputLock:
     """One lock object per process, served by ONE persistent thread (hooks, banner and timers all live on it).
     acquire()/release() are idempotent; hold() is a nesting-safe context manager.
@@ -181,7 +189,7 @@ class InputLock:
     of the first freed the first thread's callbacks while its window was still alive: the process crashed ("Connection
     closed"). One thread for the life of the process removes the overlap."""
 
-    def __init__(self, banner_class=BANNER_CLASS, linger_ms=2500, state_dir=None, indicator=None):
+    def __init__(self, banner_class=BANNER_CLASS, linger_ms=2500, state_dir=None, indicator=None, whole_task: bool = False):
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
         self._thread_up = threading.Event()
@@ -192,7 +200,7 @@ class InputLock:
         self.taken_over = False
         self.stopped = False
         self.reason = ""
-        self.mode = "real_input"
+        self.mode = "whole_task" if whole_task else "real_input"
         self.since: float | None = None
         self.remote_task = False
         self.screen_view = False
@@ -200,8 +208,8 @@ class InputLock:
         self.ctrl_hwnd = 0
         self.policy = Policy()
         self.max_seconds = 60.0
-        self.whole_task = False
-        self.linger = 8.0
+        self.whole_task = bool(whole_task)
+        self.linger = linger_for_mode(self.whole_task)
         self.last_touch = time.monotonic()
         self.linger_ms = linger_ms
         self.banner_class = banner_class
@@ -212,6 +220,11 @@ class InputLock:
         self._state_dir = state_dir
         self.indicator = indicator
         atexit.register(self.release, "exit")
+
+    def set_mode(self, whole_task: bool):
+        self.whole_task = bool(whole_task)
+        self.mode = "whole_task" if self.whole_task else "real_input"
+        self.linger = linger_for_mode(self.whole_task)
 
     # ------------------------------------------------------------ bridge helpers
 
@@ -252,9 +265,9 @@ class InputLock:
                 self._depth += 1
             self.last_touch = time.monotonic()
             if self.locked:
+                if remote_task or whole_task:
+                    self.set_mode(True)
                 if remote_task:
-                    self.whole_task = True
-                    self.mode = "whole_task"
                     self.max_seconds = max(5.0, float(max_seconds))
                     self._text = banner_text or REMOTE_BANNER_TEXT
                     if reason:
@@ -266,8 +279,7 @@ class InputLock:
                     self._write_bridge()
                 return True
             self.max_seconds = max(5.0, float(max_seconds)) if remote_task else clamp_seconds(max_seconds)
-            self.whole_task = bool(whole_task or remote_task)
-            self.mode = "whole_task" if self.whole_task else "real_input"
+            self.set_mode(bool(whole_task or remote_task))
             self.taken_over = self.stopped = False
             self.reason = reason
             self.since = round(time.time(), 3)
@@ -300,8 +312,7 @@ class InputLock:
             self.remote_task = False
             still_real = self._depth > 0
         if still_real and self.locked:
-            self.whole_task = False
-            self.mode = "real_input"
+            self.set_mode(False)
             self.reason = ""
             self._text = BANNER_TEXT
             if self.banner_hwnd:

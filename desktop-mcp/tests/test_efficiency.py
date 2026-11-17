@@ -276,11 +276,88 @@ def test_batch_success_lists_only_notable_steps(launch_app, desktop):
 
 def test_caption_buttons_hidden_unless_queried():
     class C:
+        def __init__(self, n, aid=""):
+            self.Name = n
+            self.AutomationId = aid
+
+    class NoAid:
         def __init__(self, n):
             self.Name = n
+
+        @property
+        def AutomationId(self):
+            raise RuntimeError("COM error reading AutomationId")
+
     f = engine._is_caption_button
     assert f(C("Close Calculator"), "calculator", "") is True
     assert f(C("Minimize"), "calculator", "") is True
+    assert f(C("Maximize"), "calculator", "") is True
+    assert f(C("Restore"), "calculator", "") is True
+    assert f(C("Close"), "calculator", "") is False
+    assert f(C("Close", "btnClose"), "calculator", "") is False
+    assert f(NoAid("Close"), "calculator", "") is False
+    assert f(C("Close", "Close"), "calculator", "") is True
+    assert f(C("Close", "Close"), "calculator", "close") is False
     assert f(C("Close Calculator"), "calculator", "close") is False
     assert f(C("Close tab"), "calculator", "") is False
     assert f(C("Submit"), "calculator", "") is False
+
+
+def test_act_requires_window_or_ref_and_parse_ref_accepts_brackets(monkeypatch, desktop):
+    with pytest.raises(ToolError) as exc_info:
+        desktop.act(name="Submit", action="click")
+    assert str(exc_info.value) == "need window= or a ref like w1:e12"
+
+    w = desktop._win(12345)
+    assert desktop._parse_ref(f"[{w.wid}:e12]") == (w, "e", 12)
+    assert desktop._parse_ref(f"  [{w.wid}:o3]  ") == (w, "o", 3)
+    monkeypatch.setattr(desktop, "find_window", lambda spec: {"id": w.wid, "hwnd": 12345, "title": "T", "process": "p"})
+    assert desktop._parse_ref("[e7]", window="T") == (w, "e", 7)
+
+
+def test_capture_window_frees_gdi_objects_in_finally(monkeypatch):
+    from PIL import Image
+    import win32ui
+
+    events = []
+
+    class FakeDC:
+        def __init__(self, tag):
+            self.tag = tag
+
+        def CreateCompatibleDC(self):
+            return FakeDC("mem")
+
+        def SelectObject(self, _bmp):
+            events.append("select")
+
+        def GetSafeHdc(self):
+            return 99
+
+        def DeleteDC(self):
+            events.append(f"del_{self.tag}")
+
+    class FakeBmp:
+        def CreateCompatibleBitmap(self, _src, _w, _h):
+            events.append("create_bmp")
+
+        def GetInfo(self):
+            raise RuntimeError("GetInfo boom")
+
+        def GetHandle(self):
+            return 777
+
+    monkeypatch.setattr(winsys.win32gui, "GetWindowRect", lambda hwnd: (10, 20, 110, 80))
+    monkeypatch.setattr(winsys.win32gui, "GetWindowDC", lambda hwnd: 555)
+    monkeypatch.setattr(winsys.win32gui, "ReleaseDC", lambda hwnd, hdc: events.append(("release_dc", hwnd, hdc)))
+    monkeypatch.setattr(winsys.win32gui, "DeleteObject", lambda h: events.append(("delete_obj", h)))
+    monkeypatch.setattr(win32ui, "CreateDCFromHandle", lambda hdc: FakeDC("src"))
+    monkeypatch.setattr(win32ui, "CreateBitmap", lambda: FakeBmp())
+    monkeypatch.setattr(winsys.u32, "PrintWindow", lambda hwnd, hdc, flags: 1)
+    monkeypatch.setattr("PIL.ImageGrab.grab", lambda bbox=None, all_screens=False: Image.new("RGB", (100, 60)))
+
+    img, origin = winsys.capture_window(42)
+    assert origin == (10, 20) and img.size == (100, 60)
+    assert "del_mem" in events and "del_src" in events
+    assert ("release_dc", 42, 555) in events
+    assert ("delete_obj", 777) in events

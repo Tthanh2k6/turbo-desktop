@@ -143,7 +143,7 @@ def window_control(window: str, action: str) -> str:
 @mcp.tool()
 def screenshot(window: str) -> Image:
     """Last resort when the UIA tree is empty: PNG of one window (password fields blacked out)."""
-    return Image(data=_on_worker(lambda: desk().screenshot(window)), format="png")
+    return _guard(lambda: Image(data=desk().screenshot(window), format="png"))
 
 
 @mcp.tool()

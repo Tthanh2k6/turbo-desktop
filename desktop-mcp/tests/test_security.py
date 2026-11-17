@@ -192,9 +192,155 @@ def test_local_prompt_timeout_closes_the_box():
 
 
 
-def test_owner_approval_dialog_is_a_deny_zone():
+def test_owner_approval_dialog_is_a_deny_zone(monkeypatch, desktop):
     """Field 18/11: a phone task's agent clicked "Cho phép" in the Claude Code approval dialog. Never again."""
     from turbo_desktop import security as sec
-    assert "owner-approval" in sec.is_denied_window("python", "Claude Code cần duyệt")
-    assert "owner-approval" in sec.is_denied_window("pythonw", "Claude Code needs approval")
+    assert sec.PROMPT_TITLE.lower() in sec.OWNER_APPROVAL_TITLES
+    for title in ("Claude Code cần duyệt", "Claude Code needs approval", sec.PROMPT_TITLE):
+        assert "owner-approval" in sec.is_denied_window("python", title)
+        cls = sec.classify_action(process="python", window_title=title, control_name="Yes", control_role="Button", action="click")
+        assert cls.level == "deny" and cls.rule == "owner-approval"
     assert sec.is_denied_window("python", "Claude Code") is None
+
+    # Desktop.act passes class_name=d.get("class") to classify_action
+    seen_cls = []
+    orig_classify = sec.classify_action
+
+    def spy_classify(**kw):
+        seen_cls.append(kw.get("class_name"))
+        return orig_classify(**kw)
+
+    monkeypatch.setattr(sec, "classify_action", spy_classify)
+    fake_win = {"id": "w1", "hwnd": 888, "title": "Creds", "process": "explorer", "pid": 10, "focused": True,
+                "class": "Credential Dialog Xaml Host"}
+    monkeypatch.setattr(desktop, "find_window", lambda spec: dict(fake_win))
+    with pytest.raises(ToolError) as exc_info:
+        desktop.act("w1", "press_keys", keys="{Enter}")
+    assert seen_cls == ["Credential Dialog Xaml Host"]
+    assert exc_info.value.extra.get("denied") is True and exc_info.value.extra.get("rule") == "credential-dialog"
+
+
+def test_launch_resolves_target_first_and_classifies_start_menu_names(monkeypatch, desktop):
+    from turbo_desktop import engine, rules
+
+    started = []
+    monkeypatch.setattr(engine.os, "startfile", lambda p: started.append(p), raising=False)
+    monkeypatch.setattr(engine.subprocess, "Popen", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(desktop, "windows_list", lambda *a, **k: [])
+
+    fake_targets = {
+        "Bitwarden": {
+            "how": "start-menu",
+            "matched": "Bitwarden",
+            "shortcut": r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Bitwarden.lnk",
+            "path": r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Bitwarden.lnk",
+        },
+        "my-vault-alias": {
+            "how": "start-menu",
+            "matched": "My Vault",
+            "shortcut": r"C:\Users\me\Start Menu\My Vault.lnk",
+            "path": r"C:\Users\me\Start Menu\My Vault.lnk",
+            "target": r"C:\Program Files\Bitwarden\Bitwarden.exe",
+        },
+        "Windows PowerShell": {
+            "how": "start-menu",
+            "matched": "Windows PowerShell",
+            "shortcut": r"C:\Users\me\Start Menu\Windows PowerShell.lnk",
+            "path": r"C:\Users\me\Start Menu\Windows PowerShell.lnk",
+        },
+        "Registry Editor": {
+            "how": "start-menu",
+            "matched": "Registry Editor",
+            "shortcut": r"C:\ProgramData\Start Menu\Registry Editor.lnk",
+            "path": r"C:\ProgramData\Start Menu\Registry Editor.lnk",
+        },
+        "Google Chrome": {
+            "how": "start-menu",
+            "matched": "Google Chrome",
+            "shortcut": r"C:\ProgramData\Start Menu\Google Chrome.lnk",
+            "path": r"C:\ProgramData\Start Menu\Google Chrome.lnk",
+        },
+    }
+    monkeypatch.setattr(engine, "resolve_launch_target", lambda t: fake_targets.get(t))
+
+    # 1. "Bitwarden" by Start Menu name -> denied
+    with pytest.raises(ToolError) as e_bw:
+        desktop.launch("Bitwarden", wait=0.05)
+    assert e_bw.value.extra.get("denied") is True and e_bw.value.extra.get("rule") == "password-managers"
+    assert not started
+
+    # 2. .lnk with exposed target exe -> denied via target exe stem
+    with pytest.raises(ToolError) as e_lnk:
+        desktop.launch("my-vault-alias", wait=0.05)
+    assert e_lnk.value.extra.get("denied") is True and e_lnk.value.extra.get("rule") == "password-managers"
+    assert not started
+
+    # 3. "Windows PowerShell" and "Registry Editor" -> ask in balanced/strict, or deny when overridden
+    monkeypatch.setenv("TURBO_DESKTOP_PRESET", "balanced")
+    monkeypatch.setattr(sec, "PROMPT_FN", [lambda s, t: False])
+    for name in ("Windows PowerShell", "Registry Editor"):
+        with pytest.raises(ToolError) as e_sh:
+            desktop.launch(name, wait=0.05)
+        assert e_sh.value.extra.get("rule") == "shells-and-admin-tools"
+        assert not started
+
+    # When shells-and-admin-tools is overridden to deny, "Windows PowerShell" is denied outright
+    default_toml = rules._read_toml(rules.DEFAULT_RULES_FILE)
+    deny_rs = rules.build_ruleset(default_toml, {"desktop": {"overrides": {"shells-and-admin-tools": {"level": "deny"}}}}, "balanced")
+    monkeypatch.setattr(rules, "load_ruleset", lambda *a, **k: deny_rs)
+    with pytest.raises(ToolError) as e_sh_deny:
+        desktop.launch("Windows PowerShell", wait=0.05)
+    assert e_sh_deny.value.extra.get("denied") is True and e_sh_deny.value.extra.get("rule") == "shells-and-admin-tools"
+
+    # 4. Session-restore app launched by Start Menu name ("Google Chrome") hits launch-session-restore
+    bal_rs = rules.build_ruleset(default_toml, None, "balanced")
+    monkeypatch.setattr(rules, "load_ruleset", lambda *a, **k: bal_rs)
+    monkeypatch.delenv("TURBO_DESKTOP_REQUIRE_CLEAN", raising=False)
+    with pytest.raises(ToolError) as e_sr:
+        desktop.launch("Google Chrome", wait=0.05)
+    assert e_sr.value.extra.get("rule") == "launch-session-restore"
+
+
+def test_blackout_password_fields_helper_and_ocr_thumb_redaction_and_server_guard(monkeypatch, desktop):
+    import inspect
+    from PIL import Image
+    from turbo_desktop import engine, server
+
+    # 1. Helper blacks out password rects on a fake image
+    img = Image.new("RGB", (100, 80), (255, 255, 255))
+
+    class FakeRect:
+        left, top, right, bottom = 110, 220, 150, 250
+
+    engine.blackout_password_fields(img, ox=100, oy=200, rects=[FakeRect(), (60, 10, 90, 30)])
+    # Inside FakeRect -> (10..50, 20..50) is black; outside is white
+    assert img.getpixel((25, 35)) == (0, 0, 0)
+    assert img.getpixel((5, 5)) == (255, 255, 255)
+
+    # 2. _ocr_window and _thumb call _blackout_passwords before OCR / saving
+    pw_rect = type("R", (), {"left": 10, "top": 10, "right": 60, "bottom": 40})()
+    pw_ctrl = type("C", (), {
+        "ControlTypeName": "EditControl",
+        "GetPropertyValue": lambda self, pid: True,
+        "BoundingRectangle": pw_rect,
+        "GetChildren": lambda self: [],
+    })()
+    root_ctrl = type("Root", (), {"GetChildren": lambda self: [pw_ctrl]})()
+    monkeypatch.setattr(desktop, "_ctrl_for", lambda d: root_ctrl)
+    monkeypatch.setattr(winsys, "capture_window", lambda hwnd: (Image.new("RGB", (80, 60), (255, 255, 255)), (0, 0)))
+
+    ocr_pixels = []
+    monkeypatch.setattr(winsys, "ocr_image", lambda im: (ocr_pixels.append(im.getpixel((25, 25))), [])[1])
+    w = desktop._win(777)
+    desktop._ocr_window(w, {"hwnd": 777, "title": "T", "process": "p"})
+    assert ocr_pixels == [(0, 0, 0)]
+
+    thumb_path = desktop._thumb({"hwnd": 777, "title": "T", "process": "p"}, None, "before")
+    assert thumb_path is not None
+    saved = Image.open(thumb_path)
+    assert saved.getpixel((25, 25)) == (0, 0, 0)
+
+    # 3. server.screenshot wraps in _guard and has no added parameters
+    assert list(inspect.signature(server.screenshot).parameters) == ["window"]
+    err_json = json.loads(server.screenshot("no_such_window_xyz"))
+    assert err_json["ok"] is False and "no window matches" in err_json["error"]

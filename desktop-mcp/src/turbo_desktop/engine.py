@@ -418,6 +418,8 @@ class Desktop:
                 continue
             d = {"id": w.wid, "title": sec.HIDDEN_TITLE if secret else t["title"], "process": name,
                  "focused": t["hwnd"] == fg}
+            if t.get("class"):
+                d["class"] = t["class"]
             if verbose:
                 d["hwnd"] = t["hwnd"]
                 d["pid"] = t["pid"]
@@ -709,7 +711,7 @@ class Desktop:
 
     def _ocr_window(self, w: Win, d: dict) -> list[str]:
         img, (ox, oy) = winsys.capture_window(d["hwnd"])
-        # black out password fields, if any are known
+        self._blackout_passwords(img, d, ox, oy)
         res = winsys.ocr_image(img)
         w.ocr.clear()
         w.ocr_next = 1
@@ -725,7 +727,12 @@ class Desktop:
     # ------------------------------------------------------------ resolving targets
 
     def _parse_ref(self, ref: str, window=None):
-        m = re.fullmatch(r"(?:(w\d+):)?([eo])(\d+)", ref.strip())
+        if not ref or not isinstance(ref, str):
+            raise ToolError(f"bad ref '{ref}' (expected like w1:e12)")
+        s = ref.strip()
+        if s.startswith("[") and s.endswith("]"):
+            s = s[1:-1].strip()
+        m = re.fullmatch(r"(?:(w\d+):)?([eo])(\d+)", s)
         if not m:
             raise ToolError(f"bad ref '{ref}' (expected like w1:e12)")
         wid, kind, n = m.group(1), m.group(2), int(m.group(3))
@@ -942,6 +949,8 @@ class Desktop:
             return_snapshot = bool(returnSnapshot)
         self._ind_activity()
         self._note = {}
+        if not window and not ref:
+            raise ToolError("need window= or a ref like w1:e12")
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
         self._guard_window(d, action, uia=not (action in ("press_keys", "send_text") and not ref and not name))
         if action in ("press_keys", "send_text") and not ref and not name:   # keys / text for the window itself (Ctrl+S, inline rename boxes)
@@ -956,7 +965,7 @@ class Desktop:
         cls = sec.classify_action(process=d["process"], window_title=d["title"], control_name=info["name"],
                                   control_role=info["role"], action=("ocr_click" if ocr else action), keys=keys,
                                   dialog_title=self._dialog_title(c) if c is not None else None,
-                                  is_password=info["is_password"], class_name=None,
+                                  is_password=info["is_password"], class_name=d.get("class"),
                                   automation_id=info["automation_id"], help_text=info["help_text"],
                                   multiline=info["multiline"])
         base = {"window": d["title"], "process": d["process"], "control": info["name"], "role": info["role"], "action": action}
@@ -997,6 +1006,7 @@ class Desktop:
         """Cropped screenshot of the control for approvals/audit (best effort). Returns file path or None."""
         try:
             img, (ox, oy) = winsys.capture_window(d["hwnd"])
+            self._blackout_passwords(img, d, ox, oy)
             if c is not None:
                 r = c.BoundingRectangle
                 box = (max(r.left - ox - 8, 0), max(r.top - oy - 8, 0), min(r.right - ox + 8, img.width), min(r.bottom - oy + 8, img.height))
@@ -1429,20 +1439,40 @@ class Desktop:
         if "snapshotMaxChars" in kw:
             snapshot_max_chars = int(kw.pop("snapshotMaxChars"))
         self._ind_activity()
-        t = APP_ALIASES.get(target.lower(), target)
-        exe_name = Path(t).stem.lower()
-        rs = rules_mod.load_ruleset()
-        restores = exe_name in rs.session_restore
-        cls = sec.classify_action(process=exe_name, window_title=None, action="launch", session_restore=restores)
-        if cls.level == "deny":
-            raise ToolError(cls.reason, denied=True, rule=cls.rule)
-        base = {"action": "launch", "control": t, "window": "", "process": exe_name}
         if sec.stop_requested():
             raise ToolError("emergency stop active", stopped=True)
+        t = APP_ALIASES.get(target.lower(), target)
         resolved = resolve_launch_target(target)
         how = resolved["how"] if resolved else "path"
         matched = resolved["matched"] if resolved else (Path(t).name or t)
         path = resolved["path"] if resolved else t
+        exe_name, proc_candidates = _resolve_launch_names(target, t, resolved)
+        rs = rules_mod.load_ruleset()
+        restores = any(c in rs.session_restore for c in proc_candidates)
+        if restores:
+            for c in proc_candidates:
+                if c in rs.session_restore:
+                    exe_name = c
+                    break
+        cls = sec.classify_action(process=exe_name, window_title=None, action="launch",
+                                  session_restore=restores, ruleset=rs)
+        if cls.level == "allow":
+            for cand in proc_candidates:
+                if cand != exe_name:
+                    alt = sec.classify_action(process=cand, window_title=None, action="launch",
+                                              session_restore=restores, ruleset=rs)
+                    if alt.level != "allow":
+                        cls = alt
+                        break
+        if cls.level != "deny" and matched:
+            t_cls = sec.classify_action(process=exe_name, window_title=matched, action="launch",
+                                        session_restore=restores, ruleset=rs)
+            if t_cls.level == "deny":
+                cls = t_cls
+        base = {"action": "launch", "control": t, "window": "", "process": exe_name}
+        if cls.level == "deny":
+            self.audit.write(event="denied", reason=cls.reason, rule=cls.rule, **base)
+            raise ToolError(cls.reason, denied=True, rule=cls.rule)
         argv = [path] + (args.split() if args else [])
         extra: dict = {"how": how, "matched": matched}
         if resolved and "shortcut" in resolved:
@@ -1598,34 +1628,19 @@ class Desktop:
         self.audit.write(event="window", action=action, window=d["title"], process=d["process"])
         return {"ok": True}
 
+    def _blackout_passwords(self, img, d: dict | None = None, ox: int = 0, oy: int = 0, rects=None):
+        try:
+            root = self._ctrl_for(d) if (rects is None and d is not None) else None
+            blackout_password_fields(img, ox, oy, rects=rects, root=root)
+        except Exception:
+            pass
+        return img
+
     def screenshot(self, window, region=None):
         d = self.find_window(window)
         self._guard_window(d, "inspect")
         img, (ox, oy) = winsys.capture_window(d["hwnd"])
-        from PIL import ImageDraw
-        draw = ImageDraw.Draw(img)
-        # redact password fields
-        try:
-            root = self._ctrl_for(d)
-            for c in root.GetChildren():
-                pass
-            stack = [root]
-            while stack:
-                x = stack.pop()
-                try:
-                    kids = x.GetChildren()
-                except Exception:
-                    continue
-                for k in kids:
-                    try:
-                        if role_of(k) == "Edit" and k.GetPropertyValue(auto.PropertyId.IsPasswordProperty):
-                            r = k.BoundingRectangle
-                            draw.rectangle((r.left - ox, r.top - oy, r.right - ox, r.bottom - oy), fill="black")
-                    except Exception:
-                        pass
-                    stack.append(k)
-        except Exception:
-            pass
+        self._blackout_passwords(img, d, ox, oy)
         if region:
             x, y, w_, h_ = region
             img = img.crop((x, y, x + w_, y + h_))
@@ -1636,6 +1651,89 @@ class Desktop:
         img.save(buf, "PNG")
         self.audit.write(event="screenshot", window=d["title"], process=d["process"])
         return buf.getvalue()
+
+
+def _password_rects(root) -> list[tuple[int, int, int, int]]:
+    out: list[tuple[int, int, int, int]] = []
+    if root is None:
+        return out
+    stack = [root]
+    while stack:
+        x = stack.pop()
+        if x is None:
+            continue
+        try:
+            kids = x.GetChildren()
+        except Exception:
+            continue
+        for k in kids:
+            try:
+                if role_of(k) == "Edit" and k.GetPropertyValue(auto.PropertyId.IsPasswordProperty):
+                    r = k.BoundingRectangle
+                    out.append((int(r.left), int(r.top), int(r.right), int(r.bottom)))
+            except Exception:
+                pass
+            stack.append(k)
+    return out
+
+
+def blackout_password_fields(img, ox: int = 0, oy: int = 0, rects: Iterable | None = None, root=None):
+    """Black out password-field rectangles (screen coords `(left, top, right, bottom)` or objects with
+    `.left/.top/.right/.bottom`, offset by window origin `(ox, oy)`) on `img` in place and return `img`."""
+    from PIL import ImageDraw
+
+    rect_list = list(rects) if rects is not None else _password_rects(root)
+    if not rect_list:
+        return img
+    draw = ImageDraw.Draw(img)
+    for r in rect_list:
+        try:
+            if hasattr(r, "left"):
+                l, t, right, b = int(r.left), int(r.top), int(r.right), int(r.bottom)
+            else:
+                l, t, right, b = int(r[0]), int(r[1]), int(r[2]), int(r[3])
+            if right > l and b > t:
+                draw.rectangle((l - ox, t - oy, right - ox, b - oy), fill="black")
+        except Exception:
+            continue
+    return img
+
+
+def _resolve_launch_names(target: str, t: str, resolved: dict | None) -> tuple[str, list[str]]:
+    """Return `(primary_exe_stem, candidate_process_names)` for launch classification."""
+    how = resolved["how"] if resolved else "path"
+    matched = resolved["matched"] if resolved else (Path(t).name or t)
+    path = resolved["path"] if resolved else t
+    lnk_target = None
+    if resolved:
+        for k in ("target", "exe", "target_exe", "target_path", "executable"):
+            if resolved.get(k):
+                lnk_target = str(resolved[k])
+                break
+    if lnk_target:
+        exe_stem = Path(lnk_target).stem.lower()
+    elif how == "path" or str(path).lower().endswith(".exe"):
+        exe_stem = Path(path).stem.lower()
+    else:
+        exe_stem = Path(t).stem.lower()
+    folded_matched = rules_mod.fold_process_name(fold_text(_clean_query(matched)))
+    folded_target = rules_mod.fold_process_name(fold_text(_clean_query(target)))
+    folded_exe = rules_mod.fold_process_name(fold_text(_clean_query(exe_stem)))
+    mapped = (
+        rules_mod.DISPLAY_PROCESS_ALIASES.get(folded_matched)
+        or rules_mod.DISPLAY_PROCESS_ALIASES.get(folded_target)
+        or rules_mod.DISPLAY_PROCESS_ALIASES.get(folded_exe)
+    )
+    if lnk_target or how == "path":
+        primary = mapped or exe_stem or folded_matched
+    else:
+        primary = mapped or folded_matched or exe_stem
+    cands: list[str] = []
+    for item in (primary, exe_stem, folded_matched, mapped, folded_target, fold_text(_clean_query(matched))):
+        c = (item or "").strip().lower().removesuffix(".exe")
+        if c and c not in cands:
+            cands.append(c)
+    return (primary or exe_stem), cands
 
 
 def _clip_keep_nl(s, n):
@@ -1652,13 +1750,22 @@ _CAPTION = ("minimize", "maximize", "restore", "close")
 
 def _is_caption_button(ctrl, w_title: str, q: str) -> bool:
     """Minimize/Maximize/Restore/Close buttons that WinUI apps draw outside a TitleBar ("Close Calculator").
-    window_control does these; hide them from snapshots unless the query asks for one."""
+    window_control does these; hide them from snapshots unless the query asks for one.
+    A bare "Close" is only treated as a caption button when its AutomationId is "Close"."""
     try:
         name = fold_text(ctrl.Name or "")
     except Exception:
         return False
+    try:
+        aid = (ctrl.AutomationId or "").strip()
+    except Exception:
+        aid = ""
     for c in _CAPTION:
-        if name == c or (w_title and name == f"{c} {w_title}"):
+        if w_title and name == f"{c} {w_title}":
+            return not (q and c in q)
+        if name == c:
+            if c == "close" and aid.lower() != "close":
+                return False
             return not (q and c in q)
     return False
 

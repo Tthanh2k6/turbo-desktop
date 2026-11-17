@@ -200,3 +200,27 @@ def test_config_lookup_order(tmp_path, monkeypatch):
 def test_hub_classify_dict():
     d = sec.classify({"process": "x", "title": "t"}, {"name": "Thanh toán", "role": "button"}, "click")
     assert d["dangerous"] is True and d["level"] == "ask" and d["rule"] == "payment"
+
+
+def test_build_ruleset_falls_back_to_top_level_keys_when_desktop_table_exists(tmp_path, monkeypatch):
+    cfg = tmp_path / "turbo-desktop.toml"
+    cfg.write_text(
+        'preset = "strict"\n'
+        '[input_lock]\n'
+        'max_seconds = 120\n'
+        '[indicator]\n'
+        'border = false\n'
+        'color = "#112233"\n'
+        '[apps]\n'
+        'allowlist = ["top_level_app"]\n'
+        '[desktop.secrets]\n'
+        'patterns = ["confidential_deck"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TURBO_DESKTOP_PRESET", raising=False)
+    loaded = rules.load_ruleset(config_path=cfg)
+    assert loaded.preset == "strict"
+    assert loaded.input_lock == {"mode": "whole_task", "max_seconds": 120.0}
+    assert loaded.indicator == {"border": False, "color": "#112233"}
+    assert "top_level_app" in loaded.allowlist
+    assert loaded.secret_patterns == ["confidential_deck"]
