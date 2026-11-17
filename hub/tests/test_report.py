@@ -227,3 +227,63 @@ def test_report_cache_tokens_and_stopped_task_live_usage(tmp_path):
         assert rep["totals"]["tokensOut"] == 15
         assert rep["totals"]["cacheRead"] == 4000
         assert rep["totals"]["cacheCreate"] == 300
+
+
+def test_report_top_apps_window_id_map_and_batch_actions(tmp_path):
+    calc_launch = json.dumps({
+        "result": json.dumps({
+            "ok": True,
+            "matched": "calc.exe",
+            "windows": [{"id": "w3", "title": "Calculator", "process": "CalculatorApp"}],
+        })
+    })
+    zalo_launch = json.dumps({
+        "result": json.dumps({
+            "ok": True,
+            "matched": "Zalo",
+            "windows": [{"id": "w4", "title": "Marry Pham - Zalo", "process": "Zalo.exe"}],
+        })
+    })
+    discord_pending = json.dumps({
+        "result": json.dumps({
+            "ok": True,
+            "matched": "Discord",
+            "windows": [],
+            "pending": True,
+        })
+    })
+    script = [
+        {"type": "tool_call", "tool": "mcp__desktop__launch_app", "input": {"target": "calc"}, "summary": calc_launch},
+        {"type": "tool_call", "tool": "mcp__desktop__inspect_compact", "input": {"window": "w3"}},
+        {"type": "tool_call", "tool": "mcp__desktop__act", "input": {"action": "click", "ref": "w3:e5"}},
+        {"type": "tool_call", "tool": "mcp__desktop__batch_actions",
+         "input": {"window": "w3", "steps": [{"action": "click", "name": "Plus"}]}},
+        {"type": "tool_call", "tool": "mcp__desktop__launch_app", "input": {"target": "zalo"}, "summary": zalo_launch},
+        {"type": "tool_call", "tool": "mcp__desktop__batch_actions", "input": {
+            "steps": [
+                {"action": "click", "ref": "w3:e9"},
+                {"action": "type", "window": "w4", "text": "hello"},
+                {"action": "click", "ref": "w4:e12"},
+            ],
+        }},
+        {"type": "tool_call", "tool": "mcp__desktop__launch_app", "input": {}, "summary": discord_pending},
+        {"type": "final", "text": "Done.", "usage": {"input": 200, "output": 50, "cost_usd": 0.002}},
+    ]
+    with Env(tmp_path, runner_script=script) as env:
+        env.hub.manager.engine = "desktop-mcp"
+        d = env.session_client()
+        r = d.request("POST", "/tasks", {"text": "b4 flow"})
+        assert r.status_code == 200
+        tid = r.json()["taskId"]
+        env.wait_event(d, lambda e: e["type"] == "task_finished")
+
+        task = env.hub.manager.tasks[tid]
+        assert task.window_apps == {"w3": "Calculator", "w4": "Zalo"}
+
+        rep = d.request("GET", "/report?days=7").json()
+        assert rep["topApps"] == [
+            {"name": "Calculator", "count": 5},
+            {"name": "Zalo", "count": 3},
+            {"name": "Discord", "count": 1},
+        ]
+

@@ -16,6 +16,7 @@ from typing import Callable
 from . import classifier as classifier_mod
 from .audit import AuditLog
 from .runners import AgentRunner, RunnerFactory
+from .summaries import _unwrap
 
 TASK_RETENTION_DAYS = 90
 
@@ -42,6 +43,8 @@ class Task:
     usage: dict = field(default_factory=lambda: _blank_usage())
     live: dict = field(default_factory=dict)   # message id -> usage seen so far (deduplicated)
     apps: list[str] = field(default_factory=list)
+    window_apps: dict[str, str] = field(default_factory=dict)
+    _pending_launch_idx: int | None = None
     answer: str = ""
 
 
@@ -149,8 +152,9 @@ class TaskManager:
             gated = ev.pop("_gated", False)
             ev = {**ev, "task_id": task.id}
             if not gated and ev["type"] == "tool_call":
-                if app := _extract_app(ev):
-                    task.apps.append(app)
+                _record_tool_call(task, ev)
+            if ev["type"] == "tool_result":
+                _record_tool_result(task, ev)
             if ev["type"] == "usage_delta":
                 task.live[ev["mid"]] = ev["usage"]
                 total = {k: sum(u.get(k, 0) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
@@ -374,8 +378,8 @@ class TaskManager:
         if self.stopped:
             self.audit.append("action_blocked", {"task": task_id, "tool": call.get("tool"), "why": "stopped"})
             return False
-        if (t := self.tasks.get(task_id)) and (app := _extract_app(call)):
-            t.apps.append(app)
+        if t := self.tasks.get(task_id):
+            _record_tool_call(t, call)
         await emit({"type": "tool_call", "tool": call.get("tool"), "window": call.get("window"),
                     "control": call.get("control"), "action": call.get("action"), "_gated": True})
         if not self.input_lock.get("locked") and not self.indicator_external:
@@ -540,31 +544,150 @@ def _clean_app_name(raw: str) -> str:
     return s
 
 
-def _extract_app(call: dict) -> str | None:
-    tool = str(call.get("tool") or "")
-    short = tool.split("__")[-1]
-    if short not in ("launch_app", "act", "inspect_compact"):
-        return None
-    inp = call.get("input") if isinstance(call.get("input"), dict) else {}
-    for cand in (call.get("process"), call.get("app"), inp.get("process"), inp.get("app")):
-        if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
-            return cleaned
-    if short == "launch_app":
-        sum_args = (call.get("sum") or {}).get("a") if isinstance(call.get("sum"), dict) else None
-        sum_title = sum_args[0] if isinstance(sum_args, list) and sum_args else None
-        for cand in (inp.get("target"), inp.get("name"), call.get("target"), sum_title):
-            if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
-                return cleaned
-    win = call.get("window") if isinstance(call.get("window"), str) else inp.get("window")
-    if not isinstance(win, str) or not win.strip():
-        return None
-    w = win.strip()
-    if re.fullmatch(r"w\d+", w, re.I):
+def _app_from_title(raw: str) -> str | None:
+    w = raw.strip()
+    if not w or w == "?" or re.fullmatch(r"\[?w\d+\]?", w, re.I):
         return None
     if w.lower().startswith("process:"):
         return _clean_app_name(w) or None
     seg = w.rsplit(" - ", 1)[-1].strip()
     return _clean_app_name(seg) or None
+
+
+def _wid_from_ref_or_win(val: object) -> str | None:
+    if not isinstance(val, str):
+        return None
+    s = val.strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1].strip()
+    m = re.fullmatch(r"(w\d+)(?::[A-Za-z0-9_]+)?", s, re.I)
+    return m.group(1).lower() if m else None
+
+
+def _app_from_step_or_call(d: dict, window_apps: dict[str, str] | None = None) -> str | None:
+    for cand in (d.get("process"), d.get("app")):
+        if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
+            return cleaned
+    for key in ("window", "ref", "control"):
+        val = d.get(key)
+        if wid := _wid_from_ref_or_win(val):
+            if window_apps and wid in window_apps:
+                return window_apps[wid]
+        elif key == "window" and isinstance(val, str) and (app := _app_from_title(val)):
+            return app
+    return None
+
+
+def _extract_launch_result(ev: dict, window_apps: dict[str, str]) -> str | None:
+    raw = str(ev.get("full") or ev.get("result") or ev.get("text") or ev.get("summary") or "")
+    data, _ = _unwrap(raw) if raw else (None, "")
+    d = data if isinstance(data, dict) else {}
+    if d.get("ok") is False:
+        return None
+    matched_raw = d.get("matched") if isinstance(d.get("matched"), str) else None
+    matched_app = _app_from_title(matched_raw) if matched_raw else None
+    proc_raw = d.get("process") if isinstance(d.get("process"), str) else None
+    proc_app = _clean_app_name(proc_raw) if proc_raw else None
+    found_app: str | None = None
+    windows = d.get("windows")
+    if isinstance(windows, list):
+        for w in windows:
+            if not isinstance(w, dict):
+                continue
+            title = w.get("title") if isinstance(w.get("title"), str) else ""
+            w_proc = w.get("process") if isinstance(w.get("process"), str) else ""
+            w_app = _app_from_title(title) or matched_app or (_clean_app_name(w_proc) if w_proc else None) or proc_app
+            wid = w.get("id")
+            if isinstance(wid, str) and wid.strip() and w_app:
+                window_apps[wid.strip().strip("[]").lower()] = w_app
+            if not found_app and w_app:
+                found_app = w_app
+    if not found_app and (matched_app or proc_app):
+        found_app = matched_app or proc_app
+        if isinstance(d.get("id"), str) and d["id"].strip() and found_app:
+            window_apps[d["id"].strip().strip("[]").lower()] = found_app
+    if not found_app and isinstance(ev.get("sum"), dict):
+        s = ev["sum"]
+        k, a = s.get("k"), s.get("a")
+        if k == "opened" and isinstance(a, list) and a:
+            w_app = _app_from_title(str(a[0]))
+            if len(a) >= 2 and isinstance(a[1], str) and a[1].strip() and a[1] != "?" and w_app:
+                window_apps[a[1].strip().strip("[]").lower()] = w_app
+            found_app = w_app
+        elif k == "launch_pending" and isinstance(a, list) and a:
+            found_app = _app_from_title(str(a[0]))
+    return found_app
+
+
+def _extract_apps(call: dict, window_apps: dict[str, str] | None = None) -> list[str]:
+    tool = str(call.get("tool") or "")
+    short = tool.split("__")[-1]
+    if short not in ("launch_app", "act", "inspect_compact", "batch_actions"):
+        return []
+    inp = call.get("input") if isinstance(call.get("input"), dict) else {}
+    merged = {**inp, **{k: v for k, v in call.items() if v is not None}}
+    if short == "launch_app":
+        wmap = window_apps if window_apps is not None else {}
+        if res_app := _extract_launch_result(call, wmap):
+            return [res_app]
+        for cand in (call.get("process"), call.get("app"), inp.get("process"), inp.get("app")):
+            if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
+                return [cleaned]
+        for cand in (inp.get("target"), inp.get("name"), call.get("target")):
+            if isinstance(cand, str) and (cleaned := _app_from_title(cand) or _clean_app_name(cand)):
+                return [cleaned]
+        if app := _app_from_step_or_call(merged, window_apps):
+            return [app]
+        return []
+    if short == "batch_actions":
+        out: list[str] = []
+        top_app = _app_from_step_or_call(merged, window_apps)
+        steps = inp.get("steps") if isinstance(inp.get("steps"), list) else call.get("steps")
+        if isinstance(steps, list) and steps:
+            for st in steps:
+                if isinstance(st, dict):
+                    st_app = _app_from_step_or_call(st, window_apps) or top_app
+                    if st_app:
+                        out.append(st_app)
+        if not out and top_app:
+            out.append(top_app)
+        return out
+    if app := _app_from_step_or_call(merged, window_apps):
+        return [app]
+    return []
+
+
+def _extract_app(call: dict, window_apps: dict[str, str] | None = None) -> str | None:
+    apps = _extract_apps(call, window_apps)
+    return apps[0] if apps else None
+
+
+def _record_tool_call(task: Task, call: dict) -> None:
+    short = str(call.get("tool") or "").split("__")[-1]
+    apps = _extract_apps(call, task.window_apps)
+    if short == "launch_app":
+        if apps:
+            task.apps.append(apps[0])
+            task._pending_launch_idx = len(task.apps) - 1
+        else:
+            task._pending_launch_idx = None
+    else:
+        task._pending_launch_idx = None
+        task.apps.extend(apps)
+
+
+def _record_tool_result(task: Task, ev: dict) -> None:
+    if ev.get("ok") is False:
+        return
+    short = str(ev.get("tool") or "").split("__")[-1]
+    if short == "launch_app":
+        app = _extract_launch_result(ev, task.window_apps)
+        if app:
+            if task._pending_launch_idx is not None and 0 <= task._pending_launch_idx < len(task.apps):
+                task.apps[task._pending_launch_idx] = app
+            else:
+                task.apps.append(app)
+            task._pending_launch_idx = None
 
 
 def _takes_task(factory) -> bool:
