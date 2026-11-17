@@ -55,10 +55,12 @@ class MainActivity : FragmentActivity() {
             "stop" -> { Graph.stop(); log("stopped=${Graph.stopped.value}") }
             "onboard" -> Graph.prefs.onboarded = true
             "tab" -> Graph.requestTab.value = i.getStringExtra("name")
+            "fullscreen" -> Graph.requestFullScreen.value = true
             "takeover" -> { Graph.takeOver(); log("paused=${Graph.paused.value}") }
             "resume" -> { Graph.resume(); log("stopped=${Graph.stopped.value}") }
             "state" -> log("state online=${Graph.online.value} via=${Graph.via.value} stopped=${Graph.stopped.value} " +
                 "session=${Graph.sessionOpen} left=${Graph.sessionSecondsLeft()} pending=${Graph.pending.value.size} locked=${Graph.inputLocked.value} indicator=${Graph.indicator.value} paused=${Graph.paused.value} " +
+                "crop=${Graph.screenCrop.value?.region?.joinToString(",")} quality=${Graph.screenQuality.value.key} " +
                 "events=${Graph.events.value.size} last=${Graph.events.value.lastOrNull()?.line(this@MainActivity)} status=${Graph.status.value}")
             "decide" -> if (Biometric.authenticate(this@MainActivity))
                 log("decide=" + Graph.decide(i.getStringExtra("id") ?: Graph.pending.value.firstOrNull()?.id ?: "", i.getStringExtra("decision") ?: "deny"))

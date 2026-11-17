@@ -547,7 +547,8 @@ def create_app(settings: Settings) -> FastAPI:
                            "pendingApprovals": len(manager.pending_approvals()), "now": int(now())})
 
     @app.get("/screen.jpg")
-    async def get_screen_jpg(w: int = 960, q: int = 60, ctx: Ctx = Depends(in_session)):
+    async def get_screen_jpg(w: int = 960, q: int = 60, rx: int = 0, ry: int = 0, rw: int = 1000, rh: int = 1000,
+                             ctx: Ctx = Depends(in_session)):
         sv = screen_view_cfg()
         if not sv["enabled"]:
             return reply(ctx, {"detail": "screen view is off"}, 403)
@@ -565,6 +566,7 @@ def create_app(settings: Settings) -> FastAPI:
             patterns=settings.secret_title_patterns,
             grabber=settings.screen_grabber,
             window_enumerator=settings.window_enumerator,
+            region=(rx, ry, rw, rh),
         )
         last_audit = st.screen_audit_at.get(ctx.device_id)
         if last_audit is None or t - last_audit >= 60.0:

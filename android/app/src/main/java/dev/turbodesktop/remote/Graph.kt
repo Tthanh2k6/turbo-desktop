@@ -130,6 +130,7 @@ object Graph {
     val paused = MutableStateFlow(false)
     val taskUsage = MutableStateFlow<Usage?>(null)   // null = the agent reported no usage yet: show a dash, never a fake 0
     val taskRunning = MutableStateFlow(false)   // a task_started without a task_finished yet
+    val requestFullScreen = MutableStateFlow(false)   // debug/adb hook: open the full-screen player
     val requestTab = MutableStateFlow<String?>(null)   // debug/adb hook: jump to a tab
     val policy = MutableStateFlow<JSONObject?>(null)   // what the hub says is in force (preset, totp, biometric, lock mode...)
     val indicator = MutableStateFlow("idle")    // idle | acting | input_locked: drives the orange frame and the status chip
@@ -154,6 +155,11 @@ object Graph {
     val screenBitmap = MutableStateFlow<androidx.compose.ui.graphics.ImageBitmap?>(null)
     /** Owner's chosen refresh rate for the PC screen view; the hub's maxFps still caps it. */
     val screenFps = MutableStateFlow(1.0)
+    /** Full-frame sharpness the owner picked; a zoomed view always gets a sharp crop of just the visible part. */
+    val screenQuality = MutableStateFlow(ScreenQuality.ECO)
+    val screenCrop = MutableStateFlow<ScreenCrop?>(null)
+    @Volatile private var zoomRegion: IntArray? = null
+    @Volatile private var zoomDrawnWidth: Int = 0
     val screenFrameAtMs = MutableStateFlow(0L)
     val screenRedacted = MutableStateFlow(0)
     val report = MutableStateFlow<ReportData?>(null)
@@ -177,8 +183,21 @@ object Graph {
         totpEnrollPending.value = prefs.totpEnrollPending
         showApiCost.value = prefs.showApiCost
         screenFps.value = prefs.screenFps.toDouble().takeIf { it > 0 } ?: 1.0
+        screenQuality.value = ScreenQuality.of(prefs.screenQuality)
         if (prefs.preset == "strict") screenViewEnabled.value = false
         Notifier.createChannels(app)
+    }
+
+    fun setScreenQuality(q: ScreenQuality) {
+        prefs.screenQuality = q.key
+        screenQuality.value = q
+    }
+
+    /** Called by the zoomable player: region in thousandths, or null when not zoomed. */
+    fun setZoom(region: IntArray?, drawnWidthPx: Int) {
+        zoomRegion = region
+        zoomDrawnWidth = drawnWidthPx
+        if (region == null) screenCrop.value = null
     }
 
     fun setScreenFps(fps: Double) {
@@ -412,7 +431,8 @@ object Graph {
     }
 
     suspend fun fetchScreenFrame(): Int = try {
-        val r = client.callBytes("/screen.jpg?w=960&q=60")
+        val region = zoomRegion
+        val r = client.callBytes(ZoomMath.screenPath(screenQuality.value, region, zoomDrawnWidth))
         when (r.status) {
             200 -> {
                 online.value = true
@@ -421,8 +441,13 @@ object Graph {
                     val bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                         android.graphics.BitmapFactory.decodeByteArray(r.bytes, 0, r.bytes.size)
                     }
-                    if (bmp != null) screenBitmap.value = bmp.asImageBitmap()
-                    screenFrame.value = r.bytes
+                    if (region != null) {
+                        // a crop answers the zoom it was asked for; ignore it if the owner zoomed out meanwhile
+                        if (bmp != null && zoomRegion != null) screenCrop.value = ScreenCrop(bmp.asImageBitmap(), region)
+                    } else {
+                        if (bmp != null) screenBitmap.value = bmp.asImageBitmap()
+                        screenFrame.value = r.bytes
+                    }
                     screenFrameAtMs.value = System.currentTimeMillis()
                     screenRedacted.value = r.redacted
                 }

@@ -137,8 +137,11 @@ def capture_screen_jpeg(
     patterns: Sequence[str] = SECRET_TITLE_PATTERNS,
     grabber: Callable | Image.Image | None = None,
     window_enumerator: Callable | Sequence | None = None,
+    region: tuple[int, int, int, int] | None = None,
 ) -> tuple[bytes, int]:
-    """Capture primary monitor, black out secret windows before encoding, scale to <= max_width, encode JPEG."""
+    """Capture primary monitor, black out secret windows before encoding, optionally crop to `region`
+    (x, y, w, h in thousandths of the screen, for the phone's zoomed view), scale to <= max_width, encode JPEG.
+    A crop is never upscaled, so a zoomed view gets the PC's own pixels."""
     def _windows():
         return enum_windows() if window_enumerator is None else (
             window_enumerator() if callable(window_enumerator) else list(window_enumerator))
@@ -155,14 +158,35 @@ def capture_screen_jpeg(
         if key not in seen:
             seen.add(key); windows.append(w)
     img, redacted = redact_image(img, windows, patterns, mon_rect)
-    w = max(1, min(int(max_width), 960))
-    q = max(30, min(int(quality), 80))
+    if region is not None:
+        box = crop_box(region, img.width, img.height)
+        if box is not None:
+            img = img.crop(box)
+    w = max(1, min(int(max_width), MAX_WIDTH))
+    q = max(30, min(int(quality), MAX_QUALITY))
     if img.width > w:
         h = max(1, int(round(img.height * w / img.width)))
         img = img.resize((w, h), Image.Resampling.BILINEAR)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=q, subsampling=0)
     return buf.getvalue(), redacted
+
+
+MAX_WIDTH = 1920     # full frames: the phone picks 960 / 1600 / 1920 ("Tiết kiệm" / "Nét" / "Rất nét")
+MAX_QUALITY = 85
+
+
+def crop_box(region: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int] | None:
+    """(x, y, w, h) in thousandths -> pixel box clamped to the image, at least 16 px each way. None = whole image."""
+    x, y, rw, rh = (max(0, min(1000, int(v))) for v in region)
+    if rw <= 0 or rh <= 0 or (x == 0 and y == 0 and rw >= 1000 and rh >= 1000):
+        return None
+    x0 = x * width // 1000
+    y0 = y * height // 1000
+    x1 = min(width, max(x0 + 16, (x + rw) * width // 1000))
+    y1 = min(height, max(y0 + 16, (y + rh) * height // 1000))
+    x0, y0 = max(0, min(x0, x1 - 16)), max(0, min(y0, y1 - 16))
+    return x0, y0, x1, y1
 
 
 def demo_frame() -> tuple[Image.Image, tuple[int, int, int, int]]:

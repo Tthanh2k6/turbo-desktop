@@ -102,3 +102,23 @@ def test_screen_requires_session(env):
     assert paired_no_session.request("GET", "/screen.jpg").status_code == 401
     with_session = env.session_client()
     assert with_session.request("GET", "/screen.jpg").status_code == 200
+
+
+def test_zoom_crop_keeps_redaction_and_native_pixels(tmp_path):
+    assert screen.crop_box((0, 0, 1000, 1000), 1920, 1080) is None
+    assert screen.crop_box((250, 500, 250, 250), 2000, 1000) == (500, 500, 1000, 750)
+    assert screen.crop_box((990, 990, 500, 500), 1000, 1000) == (984, 984, 1000, 1000)   # clamped, >= 16 px
+    with Env(tmp_path) as env:
+        env.settings.screen_grabber = lambda: _fake_frame(2400, 1200)
+        env.settings.window_enumerator = lambda: [{"title": "prod credentials", "rect": (1200, 600, 2400, 1200)}]
+        d = env.session_client()
+        # right-bottom quarter-ish: half secret window, never upscaled past the PC's own pixels
+        r = d.request("GET", "/screen.jpg?w=1800&q=80&rx=400&ry=400&rw=300&rh=300")
+        assert r.status_code == 200 and r.headers["x-redacted"] == "1"
+        out = Image.open(io.BytesIO(r.content))
+        assert out.size == (720, 360)                       # 30% of 2400 x 30% of 1200, not scaled up to 1800
+        assert out.getpixel((100, 100))[0] > 180            # (1060, 580): outside the secret window
+        assert out.getpixel((600, 300)) == (0, 0, 0)        # (1560, 780): inside it
+        env.clock.t += 1
+        full = Image.open(io.BytesIO(d.request("GET", "/screen.jpg?w=4000&q=99").content))
+        assert full.size == (1920, 960)                     # full frames capped at 1920 px

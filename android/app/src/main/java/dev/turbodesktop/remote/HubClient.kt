@@ -40,6 +40,7 @@ class Prefs(ctx: Context) {
     var needsBiometric: Boolean get() = sp.getBoolean("needsBiometric", true); set(v) = sp.edit().putBoolean("needsBiometric", v).apply()
     var totpEnrollPending: Boolean get() = sp.getBoolean("totpEnrollPending", false); set(v) = sp.edit().putBoolean("totpEnrollPending", v).apply()
     var pcName: String get() = s("pcName"); set(v) = put("pcName", v)
+    var screenQuality: String get() = s("screenQuality"); set(v) = put("screenQuality", v)
     var screenFps: Float get() = sp.getFloat("screenFps", 1f); set(v) = sp.edit().putFloat("screenFps", v).apply()
     var showApiCost: Boolean get() = sp.getBoolean("showApiCost", false); set(v) = sp.edit().putBoolean("showApiCost", v).apply()
     var lang: String get() = s("lang"); set(v) = put("lang", v)

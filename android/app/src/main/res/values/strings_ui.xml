@@ -383,4 +383,9 @@
     <string name="act_use_tool">dùng công cụ</string>
     <string name="appr_wants_cc">Claude Code muốn %1$s “%2$s”</string>
     <string name="appr_no_timeout">Không giới hạn thời gian: chờ đến khi bạn duyệt (trên điện thoại hoặc máy tính)</string>
+    <string name="player_quality_title">Độ nét</string>
+    <string name="player_quality_eco">Tiết kiệm (960 px)</string>
+    <string name="player_quality_sharp">Nét (1600 px)</string>
+    <string name="player_quality_max">Rất nét (1920 px)</string>
+    <string name="player_zoom_hint">Chụm hai ngón để phóng to, kéo để di chuyển, chạm đúp để về lại. Khi phóng to, phần đang xem được gửi nét bằng đúng điểm ảnh của máy tính.</string>
 </resources>

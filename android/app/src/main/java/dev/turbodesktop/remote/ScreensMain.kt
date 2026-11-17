@@ -350,6 +350,44 @@ private fun PlayerOverlayPill(
 
 private val SCREEN_FPS_CHOICES = listOf(0.5, 1.0, 2.0, 3.0, 5.0)
 
+/** Full-frame sharpness. A zoomed view always gets a sharp crop of only the visible part. */
+@Composable
+private fun QualityChoices(onPicked: () -> Unit) {
+    val c = LocalTurboColors.current
+    val q by Graph.screenQuality.collectAsState()
+    Text(
+        text = stringResource(R.string.player_quality_title),
+        style = MaterialTheme.typography.titleSmall,
+        color = c.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+    )
+    listOf(
+        ScreenQuality.ECO to R.string.player_quality_eco,
+        ScreenQuality.SHARP to R.string.player_quality_sharp,
+        ScreenQuality.MAX to R.string.player_quality_max,
+    ).forEach { (opt, label) ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = TurboSpacing.touchMin)
+                .clickable(role = Role.RadioButton) { Graph.setScreenQuality(opt); onPicked() }
+                .padding(horizontal = 20.dp)
+                .testTag("quality_" + opt.key),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = stringResource(label), style = MaterialTheme.typography.bodyLarge, color = c.onSurface,
+                modifier = Modifier.weight(1f))
+            if (opt == q) Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary)
+        }
+    }
+    Text(
+        text = stringResource(R.string.player_zoom_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = c.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp),
+    )
+}
+
 /** Lists the refresh rates; rates above the PC's limit are shown disabled with that limit. */
 @Composable
 private fun FpsChoices(onPicked: () -> Unit) {
@@ -425,7 +463,10 @@ private fun FpsMenuButton(modifier: Modifier = Modifier) {
                 color = c.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
-            Column(Modifier.widthIn(min = 220.dp)) { FpsChoices(onPicked = { open = false }) }
+            Column(Modifier.widthIn(min = 220.dp, max = 320.dp)) {
+                FpsChoices(onPicked = { open = false })
+                QualityChoices(onPicked = { open = false })
+            }
         }
     }
 }
@@ -615,6 +656,8 @@ fun FullScreenPlayerOverlay(
 
     BackHandler(onBack = onClose)
 
+    DisposableEffect(Unit) { onDispose { Graph.setZoom(null, 0) } }   // leaving the player drops the zoomed crop
+
     DisposableEffect(activity) {
         val prevOrientation = activity.requestedOrientation
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -658,13 +701,9 @@ fun FullScreenPlayerOverlay(
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap != null) {
-            Image(
+            ZoomableScreen(
                 bitmap = bitmap,
-                contentDescription = stringResource(R.string.set_row_screen_view),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(if (isActingOrLocked) Modifier.border(3.dp, c.ai) else Modifier),
+                frameModifier = if (isActingOrLocked) Modifier.border(3.dp, c.ai) else Modifier,
             )
         } else {
             Icon(
@@ -3306,6 +3345,7 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 6.dp, bottom = 8.dp),
                 )
                 FpsChoices(onPicked = { showFpsSheet = false })
+                QualityChoices(onPicked = { showFpsSheet = false })
             }
         }
     }

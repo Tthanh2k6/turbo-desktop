@@ -145,6 +145,10 @@ fun Main(
     LaunchedEffect(screenViewEnabled) {
         if (!screenViewEnabled) fullScreenPlayer = false
     }
+    val fsRequest by Graph.requestFullScreen.collectAsState()
+    LaunchedEffect(fsRequest) {   // debug/adb hook
+        if (fsRequest) { fullScreenPlayer = true; Graph.requestFullScreen.value = false }
+    }
 
     val effectiveIndicator = when {
         inputLocked || rawIndicator == "input_locked" -> "input_locked"

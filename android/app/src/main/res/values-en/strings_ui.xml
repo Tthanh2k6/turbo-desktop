@@ -378,4 +378,9 @@
     <string name="act_use_tool">use</string>
     <string name="appr_wants_cc">Claude Code wants to %1$s “%2$s”</string>
     <string name="appr_no_timeout">No time limit: waits until you answer (on the phone or the PC)</string>
+    <string name="player_quality_title">Sharpness</string>
+    <string name="player_quality_eco">Data saver (960 px)</string>
+    <string name="player_quality_sharp">Sharp (1600 px)</string>
+    <string name="player_quality_max">Sharpest (1920 px)</string>
+    <string name="player_zoom_hint">Pinch to zoom, drag to move, double-tap to reset. When zoomed in, the part you see is sent at full PC resolution.</string>
 </resources>
