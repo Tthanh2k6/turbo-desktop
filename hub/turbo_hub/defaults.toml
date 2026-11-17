@@ -1,0 +1,155 @@
+# turbo-desktop defaults (shipped with the hub, do not edit: put your changes in turbo-desktop.toml).
+#
+# How settings are resolved, later wins:
+#   1. this file                      (the "Easy" preset values)
+#   2. [presets.<name>] from this file, where <name> is `preset = "..."` in your turbo-desktop.toml
+#   3. your own turbo-desktop.toml    (any key below can be overridden, one by one)
+#
+# Always on, NOT configurable (the hard floor, see README "Why a hard floor"):
+#   - STOP (phone button, hub command, PC hotkey), the audit log, password-field values never sent to the model,
+#     every non-local request must be signed by a paired device, pairing only from the PC itself.
+
+preset = "easy"
+
+[server]
+port = 8750
+# Ways the phone may reach the hub, tried in this order. Only "local" is on by default.
+#   local      127.0.0.1 only (this PC)
+#   lan        this PC's private LAN address (never 0.0.0.0)
+#   tailscale  the PC's Tailscale 100.x address
+#   cloudflare cloudflared tunnel to 127.0.0.1 (outbound only, see README)
+connections = ["local"]
+language = "vi"            # vi | en (hub console messages and the pairing text)
+
+[session]
+hours = 12                 # how long a session stays open before the phone must open a new one
+persist = false            # true: a hub restart keeps open sessions (stored DPAPI-encrypted); false: reopen after restart
+
+[auth]
+totp = false               # Google Authenticator code needed to open a session
+biometric = false          # phone fingerprint/PIN needed to open a session and to answer approvals
+pairing_window_minutes = 5
+
+[cloudflare]
+require_access = false     # true: refuse tunnel requests that did not pass Cloudflare Access
+url = ""                  # your tunnel's https address, e.g. https://turbo.example.com (shown to the phone at pairing)
+
+[approval]
+timeout_seconds = 120      # no answer = Deny
+# Who decides WHICH actions are dangerous:
+#   "desktop-mcp"  (default) the desktop MCP server, which knows real control names; it uses the same preset name and
+#                  its own rules file (desktop-mcp/rules/default_rules.toml). The hub just relays the question to the phone.
+#   "hub"          the categories below, matched on tool arguments (used for agents without desktop-mcp).
+engine = "desktop-mcp"
+# Categories that currently ask the owner first. Add or remove names freely (list of names defined below).
+enabled = ["permanent_delete", "payment", "uninstall", "windows_security"]
+
+# Each category matches a desktop action when its groups match. Words are case-insensitive regular expressions.
+#   controls   the button/control label        processes  owning program (without .exe)
+#   windows    the window title                keys       the keys being pressed
+#   match      "any" (default) or "all" groups must match
+[approval.category.permanent_delete]
+controls = ["permanently delete", "xóa vĩnh viễn", "xoá vĩnh viễn", "empty recycle bin", "dọn thùng rác"]
+[approval.category.payment]
+controls = ["\\bpay\\b", "thanh toán", "buy now", "mua ngay", "place order", "đặt hàng", "checkout"]
+windows = ["payment", "thanh toán"]
+[approval.category.uninstall]
+controls = ["uninstall", "gỡ cài đặt"]
+[approval.category.windows_security]
+windows = ["windows security", "privacy & security", "quyền riêng tư", "accounts", "tài khoản"]
+processes = ["regedit", "SecHealthUI"]
+[approval.category.send]
+controls = ["\\bsend\\b", "\\bgửi\\b", "\\bpost\\b", "\\bpublish\\b", "\\bđăng\\b", "\\bsubmit\\b"]
+[approval.category.delete]
+controls = ["\\bdelete\\b", "\\bxoá\\b", "\\bxóa\\b", "\\bremove\\b"]
+[approval.category.install]
+controls = ["\\binstall\\b", "cài đặt", "\\bformat\\b", "shut ?down", "sign ?out", "đăng xuất"]
+[approval.category.terminal]
+processes = ["powershell", "pwsh", "cmd", "WindowsTerminal", "wt", "conhost"]
+[approval.category.confirm_dialog]
+controls = ["^ok$", "confirm", "xác nhận"]
+windows = ["delete", "remove", "payment", "xoá", "xóa", "thanh toán"]
+match = "all"
+[approval.category.chat_enter]
+keys = ["enter", "{enter}", "return"]
+windows = ["mail", "chat", "messenger", "zalo", "compose"]
+match = "all"
+[approval.category.task_manager]
+processes = ["taskmgr"]
+
+# Deny zones: the agent may not read or type there at all. The desktop MCP enforces them (it reads this file).
+# Password fields are ALWAYS a deny zone (hard floor) and are not listed here.
+[deny_zones]
+password_managers = false
+banking = false
+secure_desktop = true      # UAC / lock screen / secure desktop cannot be automated anyway
+windows_security_app = false
+password_manager_processes = ["bitwarden", "keepass", "keepassxc", "1password", "lastpass", "dashlane"]
+banking_windows = ["internet banking", "ngân hàng", "vietcombank", "techcombank", "mbbank", "bidv", "vpbank", "paypal"]
+
+[input_lock]
+# While the agent uses REAL keyboard/mouse input (not UI Automation patterns), the desktop MCP locks the physical
+# keyboard and mouse so the owner cannot disturb it, and shows a banner. The phone shows a chip and a "take over" button.
+#   "off"         never lock
+#   "real_input"  lock only while real input is being sent (Easy, Balanced)
+#   "whole_task"  lock for the whole task (Strict)
+mode = "real_input"
+max_seconds = 60           # a lock never lasts longer than this, then it releases by itself
+banner = true              # show the on-screen banner while locked
+
+[indicator]
+# While the AI controls the PC the desktop MCP draws a glowing border around every screen edge (brighter, plus a banner,
+# while input is locked). The phone shows a matching frame. HARD FLOOR: the border cannot be switched off while input is
+# locked or real keyboard/mouse input is being sent, whatever this says.
+border = true
+color = "#E0461D"
+
+[agent]
+# How a task is run. mode:
+#   "claude-stream-json"  Claude Code, ONE long-lived process, approvals enforced before each tool runs
+#   "oneshot"             any CLI, a new process per task. Approvals are NOT enforced by the hub (the CLI has no
+#                         permission hook), only STOP and the audit log. Use the CLI's own sandbox/approval flags.
+mode = "claude-stream-json"
+# Placeholders: {task} {mcp_config} {approval_tool}. Empty list = fill the default for the mode.
+command = []
+# For "oneshot": how stdout becomes events. "text" = one event per line, "jsonl" = JSON per line, text taken from the
+# first of text/message/content/result/delta keys.
+parser = "text"
+# Optional MCP config file with the desktop and browser servers (claude mode).
+mcp_config = ""
+
+[presets.easy]
+# the defaults above ("Thoáng")
+
+[presets.balanced]                       # "Cân bằng"
+[presets.balanced.server]
+connections = ["local", "lan", "tailscale"]
+[presets.balanced.session]
+hours = 2
+[presets.balanced.auth]
+totp = true
+[presets.balanced.approval]
+enabled = ["permanent_delete", "payment", "uninstall", "windows_security", "send", "delete", "install", "terminal"]
+[presets.balanced.deny_zones]
+password_managers = true
+banking = true
+
+[presets.strict]                         # "Chặt" (the owner's setup)
+[presets.strict.server]
+connections = ["tailscale", "cloudflare", "local"]
+[presets.strict.session]
+hours = 2
+[presets.strict.auth]
+totp = true
+biometric = true
+[presets.strict.input_lock]
+mode = "whole_task"
+[presets.strict.cloudflare]
+require_access = true
+[presets.strict.approval]
+enabled = ["permanent_delete", "payment", "uninstall", "windows_security", "send", "delete", "install", "terminal",
+           "confirm_dialog", "chat_enter", "task_manager"]
+[presets.strict.deny_zones]
+password_managers = true
+banking = true
+windows_security_app = true

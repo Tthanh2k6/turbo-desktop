@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-label="Nhật ký kiểm toán">
+<title>Nhật ký kiểm toán</title>
+<rect x="0" y="0" width="412" height="915" rx="0" fill="#14161A"/>
+<text x="16" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:41</text>
+<text x="396" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#A9ADB5" text-anchor="end" letter-spacing="0">Tailscale · đã kết nối</text>
+<text x="16" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Nhật ký</text>
+<text x="16" y="80" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Chuỗi băm còn nguyên vẹn</text>
+<rect x="300" y="34" width="96" height="44" rx="22" fill="#FF6B63"/>
+<rect x="312" y="48" width="14" height="14" rx="3" fill="#2A0A08"/>
+<text x="336" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="800" fill="#2A0A08" text-anchor="start" letter-spacing="1">STOP</text>
+<rect x="0" y="835" width="412" height="80" rx="0" fill="#1D2026"/>
+<line x1="0" y1="835" x2="412" y2="835" stroke="#343944" stroke-width="1"/>
+<text x="41.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">▤</text>
+<text x="41.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Việc</text>
+<text x="123.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">▶</text>
+<text x="123.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Trực tiếp</text>
+<text x="206.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">✔</text>
+<text x="206.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Duyệt</text>
+<rect x="256.5" y="843" width="64" height="32" rx="16" fill="#1F3B33"/>
+<text x="288.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#5CD6B0" text-anchor="middle" letter-spacing="0">☰</text>
+<text x="288.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="middle" letter-spacing="0">Nhật ký</text>
+<text x="371.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">⚙</text>
+<text x="371.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Cài đặt</text>
+<rect x="16" y="96" width="380" height="52" rx="14" fill="#16302A"/>
+<circle cx="38" cy="122" r="6" fill="#5CD6B0"/>
+<text x="54" y="127" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Chuỗi băm hợp lệ · 128 mục</text>
+<line x1="16" y1="226" x2="396" y2="226" stroke="#343944" stroke-width="1"/>
+<text x="16" y="184" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:19</text>
+<text x="96" y="184" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">action</text>
+<text x="16" y="210" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">act [w1:e31] Nút bằng</text>
+<line x1="16" y1="296" x2="396" y2="296" stroke="#343944" stroke-width="1"/>
+<text x="16" y="254" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:12</text>
+<text x="96" y="254" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">task_start</text>
+<text x="16" y="280" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Mở Máy tính và tính…</text>
+<line x1="16" y1="366" x2="396" y2="366" stroke="#343944" stroke-width="1"/>
+<text x="16" y="324" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:38:02</text>
+<text x="96" y="324" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#F2B84B" text-anchor="start" letter-spacing="0">approval_resolved</text>
+<text x="16" y="350" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Từ chối: Xoá “Báo cáo cũ”</text>
+<line x1="16" y1="436" x2="396" y2="436" stroke="#343944" stroke-width="1"/>
+<text x="16" y="394" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:37:41</text>
+<text x="96" y="394" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#F2B84B" text-anchor="start" letter-spacing="0">approval_requested</text>
+<text x="16" y="420" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Xoá “Báo cáo cũ” · thumbnail #a91f</text>
+<line x1="16" y1="506" x2="396" y2="506" stroke="#343944" stroke-width="1"/>
+<text x="16" y="464" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:30:00</text>
+<text x="96" y="464" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">session_start</text>
+<text x="16" y="490" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Điện thoại Pixel, mã TOTP đúng</text>
+<line x1="16" y1="576" x2="396" y2="576" stroke="#343944" stroke-width="1"/>
+<text x="16" y="534" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:29:41</text>
+<text x="96" y="534" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#FF6B63" text-anchor="start" letter-spacing="0">rejected</text>
+<text x="16" y="560" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Chữ ký sai từ 10.0.2.2</text>
+<line x1="16" y1="646" x2="396" y2="646" stroke="#343944" stroke-width="1"/>
+<text x="16" y="604" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:12:08</text>
+<text x="96" y="604" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="600" fill="#FF6B63" text-anchor="start" letter-spacing="0">stop</text>
+<text x="16" y="630" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Bấm STOP từ điện thoại</text>
+<text x="206.0" y="700" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Mỗi dòng ghi kèm mã băm của dòng trước</text>
+</svg>

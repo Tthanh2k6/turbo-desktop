@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-label="Màn hình chính: giao việc">
+<title>Màn hình chính: giao việc</title>
+<rect x="0" y="0" width="412" height="915" rx="0" fill="#14161A"/>
+<text x="16" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:41</text>
+<text x="396" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#A9ADB5" text-anchor="end" letter-spacing="0">Tailscale · đã kết nối</text>
+<text x="16" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Turbo Remote</text>
+<text x="16" y="80" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Máy tính đã kết nối · qua Tailscale</text>
+<rect x="300" y="34" width="96" height="44" rx="22" fill="#FF6B63"/>
+<rect x="312" y="48" width="14" height="14" rx="3" fill="#2A0A08"/>
+<text x="336" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="800" fill="#2A0A08" text-anchor="start" letter-spacing="1">STOP</text>
+<rect x="0" y="835" width="412" height="80" rx="0" fill="#1D2026"/>
+<line x1="0" y1="835" x2="412" y2="835" stroke="#343944" stroke-width="1"/>
+<rect x="9.0" y="843" width="64" height="32" rx="16" fill="#1F3B33"/>
+<text x="41.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#5CD6B0" text-anchor="middle" letter-spacing="0">▤</text>
+<text x="41.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="middle" letter-spacing="0">Việc</text>
+<text x="123.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">▶</text>
+<text x="123.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Trực tiếp</text>
+<text x="206.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">✔</text>
+<text x="206.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Duyệt</text>
+<text x="288.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">☰</text>
+<text x="288.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Nhật ký</text>
+<text x="371.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">⚙</text>
+<text x="371.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Cài đặt</text>
+<rect x="16" y="100" width="380" height="64" rx="16" fill="#1D2026"/>
+<circle cx="40" cy="132" r="6" fill="#5CD6B0"/>
+<text x="56" y="128" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Phiên còn 1 giờ 23 phút</text>
+<text x="56" y="148" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Hôm nay: 12.400 token · $0,31</text>
+<text x="380" y="138" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#5CD6B0" text-anchor="end" letter-spacing="0">Gia hạn</text>
+<text x="16" y="200" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Giao việc cho máy tính</text>
+<rect x="16" y="212" width="380" height="168" rx="20" fill="#1D2026" stroke="#343944" stroke-width="1"/>
+<text x="32" y="246" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="17" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Mở Máy tính và tính (12,5 + 7) × 3</text>
+<rect x="31" y="256" width="2" height="20" rx="0" fill="#5CD6B0"/>
+<text x="32" y="352" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Gợi ý: nói rõ mở ứng dụng nào, làm gì</text>
+<rect x="252" y="396" width="144" height="48" rx="24" fill="#5CD6B0"/>
+<text x="324.0" y="425.5" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="600" fill="#08201A" text-anchor="middle" letter-spacing="0">Gửi việc</text>
+<text x="16" y="480" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Việc gần đây</text>
+<rect x="16" y="496" width="380" height="76" rx="16" fill="#1D2026"/>
+<rect x="16" y="516" width="4" height="36" rx="2" fill="#5CD6B0"/>
+<text x="36" y="530" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Tính (12,5 + 7) × 3</text>
+<text x="36" y="554" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Xong · 4 bước · 2.100 token</text>
+<rect x="16" y="584" width="380" height="76" rx="16" fill="#1D2026"/>
+<rect x="16" y="604" width="4" height="36" rx="2" fill="#5CD6B0"/>
+<text x="36" y="618" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Tạo thư mục Báo cáo trên Desktop</text>
+<text x="36" y="642" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Xong · 6 bước · 3.800 token</text>
+<rect x="16" y="672" width="380" height="76" rx="16" fill="#1D2026"/>
+<rect x="16" y="692" width="4" height="36" rx="2" fill="#F2B84B"/>
+<text x="36" y="706" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Xoá thư mục Báo cáo cũ</text>
+<text x="36" y="730" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Bạn đã từ chối · 3 bước</text>
+</svg>

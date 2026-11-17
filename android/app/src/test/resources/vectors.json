@@ -1,0 +1,29 @@
+{
+  "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZx3tv3Ws4dX2fKjffVVwn6kJ627HTTLL57mCH97o9jjOi8Kvsd0UDUXiRj3RkRf/YachK5utufB8wozzByQMbw==",
+  "deviceId": "cbd6cb3a3a7859d7",
+  "fingerprint": "CBD6 CB3A 3A78 59D7 9173",
+  "request": {
+    "method": "post",
+    "path": "/tasks?x=1",
+    "body": "{\"text\":\"mở Máy tính\"}",
+    "ts": "1800000000",
+    "nonce": "abc123nonce",
+    "canonical": "POST\n/tasks?x=1\ne51c66f7163ba6e955439a86f01c51eea2d5ec6d8859f0fdeb3f5e5c8f2e4c28\n1800000000\nabc123nonce",
+    "sig": "MEUCIQDEyHL0eXJswCKw9sUYw6Z3q7k3aF7f8i4csHaTM6g/YQIgEwh29EESphoDnlV4L4//b3nv0OkyKVz6ZuUDV10W4C4=",
+    "bodySha256": "e51c66f7163ba6e955439a86f01c51eea2d5ec6d8859f0fdeb3f5e5c8f2e4c28"
+  },
+  "response": {
+    "status": 200,
+    "path": "/tasks?x=1",
+    "body": "{\"ok\":true}",
+    "ts": "1800000001",
+    "nonce": "abc123nonce",
+    "canonical": "RESP\n200\n/tasks?x=1\n4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93\n1800000001\nabc123nonce",
+    "sig": "MEYCIQCvLoeO3ZNJ/LDdXdBC9r4OrfbC95WMiJmC465dMg8gPgIhAJIHXILIIYFgnswNJhk1MR/3IntbSzDHf4H5YJIjeOxe"
+  },
+  "event": {
+    "payload": "{\"seq\":7,\"type\":\"text\",\"text\":\"xin chào\"}",
+    "canonical": "EVT\n{\"seq\":7,\"type\":\"text\",\"text\":\"xin chào\"}",
+    "sig": "MEQCIFSVQLMGZ88VeXL86mtoPUwLsv6JrkhRFKvwMkjzt9rJAiAmNbhLhjcdgULwhx4h6vOo4BMjn70fCb1axcRpl7BjsQ=="
+  }
+}

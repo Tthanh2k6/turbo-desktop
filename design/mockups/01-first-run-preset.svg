@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-label="Chọn mức bảo mật lần đầu">
+<title>Chọn mức bảo mật lần đầu</title>
+<rect x="0" y="0" width="412" height="915" rx="0" fill="#14161A"/>
+<text x="16" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:41</text>
+<text x="396" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#A9ADB5" text-anchor="end" letter-spacing="0">Tailscale · đã kết nối</text>
+<text x="16" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Chào mừng</text>
+<text x="16" y="80" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Chọn mức bảo mật. Đổi lại bất cứ lúc nào.</text>
+<text x="16" y="122" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#5CD6B0" text-anchor="start" letter-spacing="0.5">Bước 1 trên 3</text>
+<rect x="16" y="140" width="380" height="198" rx="20" fill="#262A32" stroke="#5CD6B0" stroke-width="1"/>
+<circle cx="44" cy="174" r="11" fill="none"/>
+<circle cx="44" cy="174" r="11" fill="none" stroke="#5CD6B0" stroke-width="2"/>
+<circle cx="44" cy="174" r="6" fill="#5CD6B0"/>
+<text x="68" y="180" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="700" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Thoáng</text>
+<text x="32" y="212" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="500" fill="#5CD6B0" text-anchor="start" letter-spacing="0">Dễ dùng, mặc định</text>
+<text x="32" y="240" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Cùng mạng Wi-Fi với máy tính, ghép một lần. </text>
+<text x="32" y="262" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Phiên 12 giờ, không cần mã Authenticator. </text>
+<text x="32" y="284" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Chỉ hỏi trước khi xoá vĩnh viễn, thanh toán, </text>
+<text x="32" y="306" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">gỡ phần mềm, đổi cài đặt bảo mật Windows. </text>
+<rect x="16" y="354" width="380" height="198" rx="20" fill="#1D2026" stroke="#343944" stroke-width="1"/>
+<circle cx="44" cy="388" r="11" fill="none"/>
+<circle cx="44" cy="388" r="11" fill="none" stroke="#9AA0AB" stroke-width="2"/>
+<text x="68" y="394" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="700" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Cân bằng</text>
+<text x="32" y="426" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Điều khiển từ điện thoại trong nhà hoặc qua Tailscale</text>
+<text x="32" y="454" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Phiên 2 giờ, mã Google Authenticator khi mở </text>
+<text x="32" y="476" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">phiên. Hỏi cả khi gửi, xoá, cài đặt, mở </text>
+<text x="32" y="498" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">terminal. </text>
+<rect x="16" y="568" width="380" height="198" rx="20" fill="#1D2026" stroke="#343944" stroke-width="1"/>
+<circle cx="44" cy="602" r="11" fill="none"/>
+<circle cx="44" cy="602" r="11" fill="none" stroke="#9AA0AB" stroke-width="2"/>
+<text x="68" y="608" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="700" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Chặt</text>
+<text x="32" y="640" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Cách bảo mật của chủ dự án</text>
+<text x="32" y="668" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Vân tay + mã Authenticator, hỏi mọi hành </text>
+<text x="32" y="690" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">động nhạy cảm, Cloudflare Access bắt buộc </text>
+<text x="32" y="712" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">nếu bật tunnel. </text>
+<rect x="16" y="800" width="380" height="48" rx="24" fill="#5CD6B0"/>
+<text x="206.0" y="829.5" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="600" fill="#08201A" text-anchor="middle" letter-spacing="0">Dùng mức Thoáng</text>
+<text x="206.0" y="876" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Từng mục vẫn bật/tắt riêng được trong Cài đặt</text>
+</svg>

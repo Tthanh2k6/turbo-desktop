@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tiếng Việt là ngôn ngữ mặc định. Bản tiếng Anh: values-en/strings.xml. Không viết chữ trực tiếp trong code. -->
+<resources>
+    <string name="app_name">Turbo Remote</string>
+    <string name="ev_task_started">Bắt đầu: %1$s</string>
+    <string name="ev_tool_call">Công cụ: %1$s %2$s</string>
+    <string name="ev_tool_ok">Xong: %1$s</string>
+    <string name="ev_tool_err">Lỗi: %1$s</string>
+    <string name="ev_approval_request">Chờ duyệt: %1$s %2$s trong %3$s</string>
+    <string name="ev_approval_resolved">Đã quyết định: %1$s</string>
+    <string name="ev_final">Kết quả: %1$s</string>
+    <string name="ev_finished">Kết thúc (%1$s)</string>
+    <string name="ev_warning">Cảnh báo: %1$s</string>
+    <string name="ev_alert">CẢNH BÁO: %1$s</string>
+    <string name="ev_stopped">ĐÃ DỪNG (STOP)</string>
+    <string name="ev_input_locked">PC đang bị khoá phím/chuột</string>
+    <string name="ev_input_unlocked">Đã mở khoá phím/chuột</string>
+    <string name="ev_taken_over">Bạn đã lấy lại quyền. Việc tạm dừng.</string>
+    <string name="chip_acting">AI đang điều khiển</string>
+    <string name="chip_locked">PC đang khoá phím/chuột</string>
+    <string name="chip_idle">Sẵn sàng</string>
+    <string name="takeover_button">Lấy lại quyền</string>
+    <string name="ev_resumed">Đã cho chạy lại</string>
+    <string name="st_access_login">Cần đăng nhập Cloudflare Access (Cài đặt)</string>
+    <string name="st_paired">Đã ghép. Mã hub: %1$s</string>
+    <string name="st_session_open">Phiên đã mở</string>
+    <string name="st_session_fail">Không mở được phiên (%1$d): mã sai hoặc đã dùng, hoặc bị khoá tạm</string>
+    <string name="st_session_expired">Phiên hết hạn, hãy mở phiên mới</string>
+    <string name="st_task_sent">Đã gửi việc</string>
+    <string name="st_stopped_hint">Đang ở trạng thái STOP. Bấm cho chạy lại.</string>
+    <string name="st_task_running">Đang có việc chạy</string>
+    <string name="st_error_code">Lỗi %1$d</string>
+    <string name="st_already_decided">Đã được quyết định hoặc hết hạn</string>
+    <string name="wake_sending">Đang gửi lệnh đánh thức…</string>
+    <string name="wake_booting">PC đang khởi động…</string>
+    <string name="wake_ready">PC đã sẵn sàng</string>
+    <string name="wake_timeout">Không đánh thức được sau 2 phút</string>
+    <string name="wake_refused">Relay từ chối lệnh</string>
+    <string name="wake_relay_fail">Không gọi được relay: %1$s</string>
+    <string name="notif_channel_approvals">Yêu cầu duyệt</string>
+    <string name="notif_channel_status">Trạng thái kết nối</string>
+    <string name="notif_approval_title">Cần duyệt: %1$s</string>
+    <string name="notif_approval_text">%1$s “%2$s” trong %3$s</string>
+    <string name="notif_allow">Cho phép</string>
+    <string name="notif_deny">Từ chối</string>
+    <string name="notif_service_title">Turbo Remote đang giữ kết nối</string>
+    <string name="notif_service_text">Để nhận yêu cầu duyệt từ máy tính</string>
+    <string name="biometric_title">Xác nhận bằng vân tay hoặc mã khoá màn hình</string>
+    <string name="device_name_fmt">%1$s %2$s</string>
+    <string name="placeholder_ui">Giao diện đang chờ duyệt bản vẽ (design/mockups).</string>
+</resources>

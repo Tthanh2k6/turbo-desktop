@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-label="Đang chạy: nhật ký trực tiếp">
+<title>Đang chạy: nhật ký trực tiếp</title>
+<rect x="0" y="0" width="412" height="915" rx="0" fill="#14161A"/>
+<text x="16" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:41</text>
+<text x="396" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#A9ADB5" text-anchor="end" letter-spacing="0">Tailscale · đã kết nối</text>
+<text x="16" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Đang chạy</text>
+<text x="16" y="80" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Mở Máy tính và tính (12,5 + 7) × 3</text>
+<rect x="300" y="34" width="96" height="44" rx="22" fill="#FF6B63"/>
+<rect x="312" y="48" width="14" height="14" rx="3" fill="#2A0A08"/>
+<text x="336" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="800" fill="#2A0A08" text-anchor="start" letter-spacing="1">STOP</text>
+<rect x="0" y="835" width="412" height="80" rx="0" fill="#1D2026"/>
+<line x1="0" y1="835" x2="412" y2="835" stroke="#343944" stroke-width="1"/>
+<text x="41.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">▤</text>
+<text x="41.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Việc</text>
+<rect x="91.5" y="843" width="64" height="32" rx="16" fill="#1F3B33"/>
+<text x="123.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#5CD6B0" text-anchor="middle" letter-spacing="0">▶</text>
+<text x="123.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="middle" letter-spacing="0">Trực tiếp</text>
+<text x="206.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">✔</text>
+<text x="206.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Duyệt</text>
+<text x="288.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">☰</text>
+<text x="288.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Nhật ký</text>
+<text x="371.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">⚙</text>
+<text x="371.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Cài đặt</text>
+<rect x="16" y="96" width="380" height="6" rx="3" fill="#262A32"/>
+<rect x="16" y="96" width="190" height="6" rx="3" fill="#5CD6B0"/>
+<rect x="16" y="108" width="191.6" height="32" rx="16" fill="#2B1812" stroke="#E0461D" stroke-width="1.5"/>
+<circle cx="34" cy="124" r="5" fill="#E0461D"/>
+<text x="48" y="129" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">AI đang điều khiển</text>
+<text x="16" y="170" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:12</text>
+<text x="94" y="170" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Kế hoạch: mở Calculator, nhập phép tính</text>
+<text x="16" y="210" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:13</text>
+<text x="94" y="210" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  windows_list</text>
+<text x="94" y="230" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok</text>
+<text x="16" y="262" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:14</text>
+<text x="94" y="262" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  launch_app  Calculator</text>
+<text x="94" y="282" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok</text>
+<text x="16" y="314" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:16</text>
+<text x="94" y="314" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  inspect_compact  w1</text>
+<text x="94" y="334" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok · 38 điều khiển</text>
+<text x="16" y="366" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:18</text>
+<text x="94" y="366" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  act  [w1:e12] Nút 1</text>
+<text x="94" y="386" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok · UIA</text>
+<text x="16" y="418" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:18</text>
+<text x="94" y="418" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  act  [w1:e19] Nút dấu cộng</text>
+<text x="94" y="438" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok · UIA</text>
+<text x="16" y="470" font-family="'JetBrains Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">09:40:19</text>
+<text x="94" y="470" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Công cụ  act  [w1:e31] Nút bằng</text>
+<text x="94" y="490" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#5CD6B0" text-anchor="start" letter-spacing="0">ok · UIA</text>
+<rect x="16" y="508" width="380" height="84" rx="16" fill="#262A32"/>
+<text x="32" y="534" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#9AA0AB" text-anchor="start" letter-spacing="0.5">Kết quả đọc được</text>
+<text x="32" y="576" font-family="'JetBrains Mono', Consolas, monospace" font-size="28" font-weight="700" fill="#ECE9E2" text-anchor="start" letter-spacing="0">58,5</text>
+<rect x="16" y="604" width="380" height="84" rx="16" fill="#1D2026"/>
+<text x="32" y="630" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#9AA0AB" text-anchor="start" letter-spacing="0.5">Việc này</text>
+<text x="32" y="656" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">2.100 token vào · 380 ra</text>
+<text x="32" y="678" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Phiên: 9.800 · Hôm nay: 12.400 · $0,31</text>
+<rect x="16" y="704" width="380" height="48" rx="24" fill="none" stroke="#343944" stroke-width="1.5"/>
+<text x="206.0" y="733.5" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="600" fill="#ECE9E2" text-anchor="middle" letter-spacing="0">Lấy lại quyền (tạm dừng việc này)</text>
+<text x="206.0" y="774" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Mở khoá phím/chuột ngay và giữ AI lại</text>
+<rect x="5.0" y="5.0" width="402" height="905" rx="18" fill="none" stroke="#E0461D" stroke-width="10" stroke-opacity="0.1"/>
+<rect x="3.5" y="3.5" width="405" height="908" rx="18" fill="none" stroke="#E0461D" stroke-width="7" stroke-opacity="0.18"/>
+<rect x="2.0" y="2.0" width="408" height="911" rx="18" fill="none" stroke="#E0461D" stroke-width="4" stroke-opacity="0.3"/>
+<rect x="1.5" y="1.5" width="409" height="912" rx="16" fill="none" stroke="#E0461D" stroke-width="3" stroke-opacity="0.9"/>
+</svg>

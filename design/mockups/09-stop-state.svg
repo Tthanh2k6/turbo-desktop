@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-label="Trạng thái STOP">
+<title>Trạng thái STOP</title>
+<rect x="0" y="0" width="412" height="915" rx="0" fill="#14161A"/>
+<text x="16" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="500" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:41</text>
+<text x="396" y="18" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#A9ADB5" text-anchor="end" letter-spacing="0">Tailscale · đã kết nối</text>
+<text x="16" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Turbo Remote</text>
+<text x="16" y="80" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Đã dừng. Máy tính không nhận lệnh.</text>
+<rect x="300" y="34" width="96" height="44" rx="22" fill="#FF6B63"/>
+<rect x="312" y="48" width="14" height="14" rx="3" fill="#2A0A08"/>
+<text x="336" y="62" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="800" fill="#2A0A08" text-anchor="start" letter-spacing="1">STOP</text>
+<rect x="0" y="835" width="412" height="80" rx="0" fill="#1D2026"/>
+<line x1="0" y1="835" x2="412" y2="835" stroke="#343944" stroke-width="1"/>
+<rect x="9.0" y="843" width="64" height="32" rx="16" fill="#1F3B33"/>
+<text x="41.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#5CD6B0" text-anchor="middle" letter-spacing="0">▤</text>
+<text x="41.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#ECE9E2" text-anchor="middle" letter-spacing="0">Việc</text>
+<text x="123.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">▶</text>
+<text x="123.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Trực tiếp</text>
+<text x="206.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">✔</text>
+<text x="206.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Duyệt</text>
+<text x="288.5" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">☰</text>
+<text x="288.5" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Nhật ký</text>
+<text x="371.0" y="864" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">⚙</text>
+<text x="371.0" y="893" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="middle" letter-spacing="0">Cài đặt</text>
+<rect x="0" y="0" width="412" height="8" rx="0" fill="#FF6B63"/>
+<rect x="16" y="108" width="380" height="252" rx="24" fill="#2A1513" stroke="#FF6B63" stroke-width="1"/>
+<circle cx="206.0" cy="168" r="30" fill="#FF6B63"/>
+<rect x="194.0" y="156" width="24" height="24" rx="4" fill="#2A0A08"/>
+<text x="206.0" y="232" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="28" font-weight="800" fill="#ECE9E2" text-anchor="middle" letter-spacing="2">ĐÃ DỪNG</text>
+<text x="206.0" y="262" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">Tiến trình AI đã bị tắt lúc 09:12:08</text>
+<text x="206.0" y="286" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="middle" letter-spacing="0">Việc mới và mọi thao tác bị chặn</text>
+<rect x="40" y="308" width="332" height="48" rx="24" fill="#ECE9E2"/>
+<text x="206.0" y="337.5" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="600" fill="#14161A" text-anchor="middle" letter-spacing="0">Cho chạy lại</text>
+<text x="16" y="404" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Chuyện gì đã xảy ra</text>
+<rect x="16" y="416" width="380" height="140" rx="16" fill="#1D2026"/>
+<text x="32" y="446" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#ECE9E2" text-anchor="start" letter-spacing="0">09:12:06  Đang tính “(12,5 + 7) × 3”</text>
+<text x="32" y="474" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#FF6B63" text-anchor="start" letter-spacing="0">09:12:08  Bạn bấm STOP</text>
+<text x="32" y="502" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="400" fill="#A9ADB5" text-anchor="start" letter-spacing="0">09:12:08  Dừng 1 tiến trình, huỷ 0 yêu cầu duyệt</text>
+<text x="32" y="530" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Mục này đã ghi vào nhật ký</text>
+<text x="16" y="590" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Phím nóng trên máy tính</text>
+<rect x="16" y="602" width="380" height="52" rx="14" fill="#1D2026"/>
+<text x="32" y="634" font-family="'JetBrains Mono', Consolas, monospace" font-size="15" font-weight="500" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Ctrl + Alt + Shift + K</text>
+<text x="380" y="634" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA0AB" text-anchor="end" letter-spacing="0">cũng dừng</text>
+<text x="16" y="690" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" fill="#A9ADB5" text-anchor="start" letter-spacing="0">Khung cam trên máy tính</text>
+<rect x="16" y="702" width="380" height="76" rx="14" fill="#1D2026"/>
+<rect x="32" y="722" width="44" height="36" rx="6" fill="none" stroke="#9AA0AB" stroke-width="2"/>
+<rect x="32" y="722" width="44" height="36" rx="6" fill="none" stroke="#E0461D" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="92" y="744" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="500" fill="#ECE9E2" text-anchor="start" letter-spacing="0">Đã tắt vì AI đã dừng</text>
+<text x="92" y="764" font-family="Roboto, 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="400" fill="#9AA0AB" text-anchor="start" letter-spacing="0">Chỉ bật lại khi bạn cho chạy lại</text>
+</svg>
