@@ -7,6 +7,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -110,6 +114,7 @@ fun App(activity: FragmentActivity) = TurboTheme {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun Main(
     activity: FragmentActivity,
     onUnpair: () -> Unit,
@@ -253,7 +258,10 @@ fun Main(
                     .then(edgeModifier)
                     .testTag("frame_$effectiveIndicator"),
             ) {
-                Column(Modifier.fillMaxSize()) {
+                // The composer sits at the bottom of the Việc screen: pad by the keyboard so it stays above it
+                // (edge-to-edge: adjustResize alone does not move Compose content).
+                val imeVisible = WindowInsets.isImeVisible
+                Column(Modifier.fillMaxSize().imePadding()) {
                     PresenceHeader()
                     Box(
                         modifier = Modifier
@@ -285,7 +293,7 @@ fun Main(
                             Tab.SETTINGS -> SettingsTab(activity, onUnpair)
                         }
                     }
-                    TurboNavBar(
+                    if (!imeVisible) TurboNavBar(
                         active = tab,
                         pendingCount = pending.size,
                         onSelect = { next ->

@@ -371,4 +371,10 @@
     <string name="set_cost_toggle">Hiện chi phí quy đổi theo API</string>
     <string name="set_cost_sub_off">Tắt · chỉ để so sánh</string>
     <string name="set_cost_sub_on">Bật · chỉ để so sánh</string>
+    <string name="player_fps_short">%1$s fps</string>
+    <string name="player_fps_title">Số hình mỗi giây</string>
+    <string name="player_fps_option">%1$s hình/giây</string>
+    <string name="player_fps_over_limit">PC giới hạn %1$s</string>
+    <string name="cd_player_fps">Đổi số hình mỗi giây</string>
+    <string name="player_fps_sheet_sub">Thấp hơn thì đỡ tốn pin và mạng. Mức cao nhất do máy tính quyết định.</string>
 </resources>

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -154,7 +155,8 @@ fun Welcome(onDone: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),   // keep fields and buttons above the keyboard
     ) {
         Column(
             modifier = Modifier
@@ -441,7 +443,8 @@ fun PairScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),   // keep fields and buttons above the keyboard
     ) {
         StepperHeader(step = 2, total = 3, onBack = onBack)
         Column(
@@ -665,7 +668,8 @@ fun TotpSetupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),   // keep fields and buttons above the keyboard
     ) {
         if (fromSettings) {
             Row(
@@ -1032,7 +1036,8 @@ fun OpenSession(activity: FragmentActivity, onUnpair: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),   // keep fields and buttons above the keyboard
     ) {
         SessionTopHeader()
         Column(

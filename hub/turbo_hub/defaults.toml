@@ -105,7 +105,7 @@ banner = true              # show the on-screen banner while locked
 [screen_view]
 # Live primary-monitor view on the phone (GET /screen.jpg). Secret windows are blacked out before encoding.
 enabled = true             # true in Easy and Balanced, false in Strict
-max_fps = 2                # rate limit per device in frames per second (faster requests get 429)
+max_fps = 5                # rate limit per device in frames per second (faster requests get 429)
 
 [privacy]
 # Visible top-level windows whose titles match any of these case-insensitive regexes are blacked out in /screen.jpg.

@@ -348,6 +348,88 @@ private fun PlayerOverlayPill(
     }
 }
 
+private val SCREEN_FPS_CHOICES = listOf(0.5, 1.0, 2.0, 3.0, 5.0)
+
+/** Lists the refresh rates; rates above the PC's limit are shown disabled with that limit. */
+@Composable
+private fun FpsChoices(onPicked: () -> Unit) {
+    val c = LocalTurboColors.current
+    val userFps by Graph.screenFps.collectAsState()
+    val hubMax by Graph.screenViewMaxFps.collectAsState()
+    SCREEN_FPS_CHOICES.forEach { f ->
+        val allowed = f <= hubMax + 1e-9
+        val selected = kotlin.math.abs(f - minOf(userFps, hubMax)) < 1e-9
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = TurboSpacing.touchMin)
+                .clickable(enabled = allowed, role = Role.RadioButton) { Graph.setScreenFps(f); onPicked() }
+                .padding(horizontal = 20.dp)
+                .testTag("fps_" + formatFps(f)),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.player_fps_option, formatFps(f)),
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (allowed) c.onSurface else c.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.weight(1f),
+            )
+            if (!allowed) Text(
+                text = stringResource(R.string.player_fps_over_limit, formatFps(hubMax)),
+                style = MaterialTheme.typography.labelMedium,
+                color = c.onSurfaceVariant,
+            )
+            if (selected) Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary)
+        }
+    }
+}
+
+@Composable
+private fun FpsMenuButton(modifier: Modifier = Modifier) {
+    val c = LocalTurboColors.current
+    val userFps by Graph.screenFps.collectAsState()
+    val hubMax by Graph.screenViewMaxFps.collectAsState()
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Box(
+            modifier = Modifier
+                .heightIn(min = TurboSpacing.touchMin)
+                .clip(TurboRadii.full)
+                .clickable(role = Role.Button, onClickLabel = stringResource(R.string.cd_player_fps)) { open = true }
+                .testTag("playerFps"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .height(36.dp)
+                    .clip(TurboRadii.full)
+                    .background(c.playerPillBg)
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = stringResource(R.string.player_fps_short, formatFps(minOf(userFps, hubMax))),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = c.onSurface,
+                )
+            }
+        }
+        androidx.compose.material3.DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = c.surfaceContainerLow,
+        ) {
+            Text(
+                text = stringResource(R.string.player_fps_title),
+                style = MaterialTheme.typography.labelLarge,
+                color = c.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            Column(Modifier.widthIn(min = 220.dp)) { FpsChoices(onPicked = { open = false }) }
+        }
+    }
+}
+
 @Composable
 private fun PlayerRoundIconButton(
     icon: ImageVector,
@@ -397,11 +479,7 @@ private fun InlineScreenPlayer(
     val online by Graph.online.collectAsState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
-    val bitmap = remember(frameBytes) {
-        frameBytes?.takeIf { it.isNotEmpty() }?.let { bytes ->
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-        }
-    }
+    val bitmap = Graph.screenBitmap.collectAsState().value   // decoded off the main thread in Graph
 
     val redactedLabel = when {
         redacted <= 0 -> null
@@ -491,6 +569,7 @@ private fun InlineScreenPlayer(
                 .padding(end = 2.dp, bottom = 0.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            FpsMenuButton()
             PlayerRoundIconButton(
                 icon = if (isLive) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = stringResource(if (isLive) R.string.cd_player_pause else R.string.cd_player_play),
@@ -519,7 +598,9 @@ fun FullScreenPlayerOverlay(
 ) {
     val c = LocalTurboColors.current
     val screenViewEnabled by Graph.screenViewEnabled.collectAsState()
-    val maxFps by Graph.screenViewMaxFps.collectAsState()
+    val hubMaxFps by Graph.screenViewMaxFps.collectAsState()
+    val userFps by Graph.screenFps.collectAsState()
+    val maxFps = minOf(userFps, hubMaxFps)
     val taskRunning by Graph.taskRunning.collectAsState()
     val stopped by Graph.stopped.collectAsState()
     val inputLocked by Graph.inputLocked.collectAsState()
@@ -554,11 +635,7 @@ fun FullScreenPlayerOverlay(
         maxFps = maxFps,
     )
 
-    val bitmap = remember(frameBytes) {
-        frameBytes?.takeIf { it.isNotEmpty() }?.let { bytes ->
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-        }
-    }
+    val bitmap = Graph.screenBitmap.collectAsState().value   // decoded off the main thread in Graph
 
     val statusPillText = when {
         isLive -> stringResource(R.string.player_live_fps, formatFps(maxFps))
@@ -699,6 +776,7 @@ fun FullScreenPlayerOverlay(
                     onClick = onClose,
                     circleSizeDp = 42,
                 )
+                FpsMenuButton()
                 PlayerRoundIconButton(
                     icon = if (isLive) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = stringResource(if (isLive) R.string.cd_player_pause else R.string.cd_player_play),
@@ -930,7 +1008,9 @@ fun WorkTab(
     val indicator by Graph.indicator.collectAsState()
     val taskRunning by Graph.taskRunning.collectAsState()
     val screenViewEnabled by Graph.screenViewEnabled.collectAsState()
-    val maxFps by Graph.screenViewMaxFps.collectAsState()
+    val hubMaxFps by Graph.screenViewMaxFps.collectAsState()
+    val userFps by Graph.screenFps.collectAsState()
+    val maxFps = minOf(userFps, hubMaxFps)
     val policy by Graph.policy.collectAsState()
     val lockRemoteState by Graph.lockRemoteTask.collectAsState()
 
@@ -3192,7 +3272,35 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
         ?: lockRemoteTaskState.ifBlank { "whole_task" }
     val svFromPolicy = HubJson.screenView(policy)
     val screenViewOn = svFromPolicy?.enabled ?: screenViewEnabledState
-    val screenViewFps = svFromPolicy?.maxFps ?: screenViewMaxFpsState
+    val screenViewFpsMax = svFromPolicy?.maxFps ?: screenViewMaxFpsState
+    val userFpsSetting by Graph.screenFps.collectAsState()
+    val screenViewFps = minOf(userFpsSetting, screenViewFpsMax)
+    var showFpsSheet by remember { mutableStateOf(false) }
+    if (showFpsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showFpsSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = c.surfaceContainerLow,
+            scrimColor = c.scrim,
+            shape = TurboRadii.extraLargeTop,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+                Text(
+                    text = stringResource(R.string.player_fps_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = c.onSurface,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+                Text(
+                    text = stringResource(R.string.player_fps_sheet_sub),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 6.dp, bottom = 8.dp),
+                )
+                FpsChoices(onPicked = { showFpsSheet = false })
+            }
+        }
+    }
 
     fun boolPolicy(key: String, def: Boolean): Boolean = policy?.optBoolean(key, def) ?: def
 
@@ -3458,6 +3566,8 @@ fun SettingsTab(activity: FragmentActivity, onUnpair: () -> Unit) {
                     strOff
                 },
                 valueColor = if (screenViewOn) c.primary else c.onSurfaceVariant,
+                showChevron = screenViewOn,
+                onClick = if (screenViewOn) ({ showFpsSheet = true }) else null,
                 modifier = Modifier.testTag("row_screen_view"),
             )
             InsetDivider()

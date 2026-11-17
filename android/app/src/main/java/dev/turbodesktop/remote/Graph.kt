@@ -1,5 +1,6 @@
 package dev.turbodesktop.remote
 
+import androidx.compose.ui.graphics.asImageBitmap
 import android.app.Application
 import android.os.Build
 import android.util.Base64
@@ -127,6 +128,10 @@ object Graph {
     val screenViewMaxFps = MutableStateFlow(2.0)
     val lockRemoteTask = MutableStateFlow("")
     val screenFrame = MutableStateFlow<ByteArray?>(null)
+    /** Decoded frame for the player. Decoding happens off the main thread (a 960 px JPEG costs ~10-20 ms per frame). */
+    val screenBitmap = MutableStateFlow<androidx.compose.ui.graphics.ImageBitmap?>(null)
+    /** Owner's chosen refresh rate for the PC screen view; the hub's maxFps still caps it. */
+    val screenFps = MutableStateFlow(1.0)
     val screenFrameAtMs = MutableStateFlow(0L)
     val screenRedacted = MutableStateFlow(0)
     val report = MutableStateFlow<ReportData?>(null)
@@ -149,8 +154,14 @@ object Graph {
         needs.value = Needs(prefs.needsTotp, prefs.needsBiometric)
         totpEnrollPending.value = prefs.totpEnrollPending
         showApiCost.value = prefs.showApiCost
+        screenFps.value = prefs.screenFps.toDouble().takeIf { it > 0 } ?: 1.0
         if (prefs.preset == "strict") screenViewEnabled.value = false
         Notifier.createChannels(app)
+    }
+
+    fun setScreenFps(fps: Double) {
+        prefs.screenFps = fps.toFloat()
+        screenFps.value = fps
     }
 
     fun setShowApiCost(enabled: Boolean) {
@@ -383,6 +394,10 @@ object Graph {
                 online.value = true
                 via.value = prefs.activePath
                 if (r.bytes.isNotEmpty()) {
+                    val bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        android.graphics.BitmapFactory.decodeByteArray(r.bytes, 0, r.bytes.size)
+                    }
+                    if (bmp != null) screenBitmap.value = bmp.asImageBitmap()
                     screenFrame.value = r.bytes
                     screenFrameAtMs.value = System.currentTimeMillis()
                     screenRedacted.value = r.redacted

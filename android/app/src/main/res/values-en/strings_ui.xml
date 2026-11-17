@@ -366,4 +366,10 @@
     <string name="set_cost_toggle">Show API-equivalent cost</string>
     <string name="set_cost_sub_off">Off · for comparison only</string>
     <string name="set_cost_sub_on">On · for comparison only</string>
+    <string name="player_fps_short">%1$s fps</string>
+    <string name="player_fps_title">Frames per second</string>
+    <string name="player_fps_option">%1$s frames/s</string>
+    <string name="player_fps_over_limit">PC limit %1$s</string>
+    <string name="cd_player_fps">Change frames per second</string>
+    <string name="player_fps_sheet_sub">Lower saves battery and data. The PC sets the highest rate allowed.</string>
 </resources>

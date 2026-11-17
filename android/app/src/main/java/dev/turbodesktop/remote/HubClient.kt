@@ -39,6 +39,7 @@ class Prefs(ctx: Context) {
     var needsTotp: Boolean get() = sp.getBoolean("needsTotp", true); set(v) = sp.edit().putBoolean("needsTotp", v).apply()
     var needsBiometric: Boolean get() = sp.getBoolean("needsBiometric", true); set(v) = sp.edit().putBoolean("needsBiometric", v).apply()
     var totpEnrollPending: Boolean get() = sp.getBoolean("totpEnrollPending", false); set(v) = sp.edit().putBoolean("totpEnrollPending", v).apply()
+    var screenFps: Float get() = sp.getFloat("screenFps", 1f); set(v) = sp.edit().putFloat("screenFps", v).apply()
     var showApiCost: Boolean get() = sp.getBoolean("showApiCost", false); set(v) = sp.edit().putBoolean("showApiCost", v).apply()
     var lang: String get() = s("lang"); set(v) = put("lang", v)
     val paired get() = hubKey.isNotBlank() && deviceId.isNotBlank()
