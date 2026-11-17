@@ -372,4 +372,10 @@
     <string name="player_fps_over_limit">PC limit %1$s</string>
     <string name="cd_player_fps">Change frames per second</string>
     <string name="player_fps_sheet_sub">Lower saves battery and data. The PC sets the highest rate allowed.</string>
+    <string name="act_run_command">run</string>
+    <string name="act_edit_file">edit</string>
+    <string name="act_web">open</string>
+    <string name="act_use_tool">use</string>
+    <string name="appr_wants_cc">Claude Code wants to %1$s “%2$s”</string>
+    <string name="appr_no_timeout">No time limit: waits until you answer (on the phone or the PC)</string>
 </resources>

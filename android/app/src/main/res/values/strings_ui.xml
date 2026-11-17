@@ -377,4 +377,10 @@
     <string name="player_fps_over_limit">PC giới hạn %1$s</string>
     <string name="cd_player_fps">Đổi số hình mỗi giây</string>
     <string name="player_fps_sheet_sub">Thấp hơn thì đỡ tốn pin và mạng. Mức cao nhất do máy tính quyết định.</string>
+    <string name="act_run_command">chạy lệnh</string>
+    <string name="act_edit_file">sửa file</string>
+    <string name="act_web">mở web</string>
+    <string name="act_use_tool">dùng công cụ</string>
+    <string name="appr_wants_cc">Claude Code muốn %1$s “%2$s”</string>
+    <string name="appr_no_timeout">Không giới hạn thời gian: chờ đến khi bạn duyệt (trên điện thoại hoặc máy tính)</string>
 </resources>

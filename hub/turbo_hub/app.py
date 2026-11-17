@@ -54,6 +54,7 @@ class Settings:
     require_access_header: bool = False
     system_state: Callable | None = None   # async () -> dict (desktop-mcp system_state)
     internal_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    cc_stale_seconds: float = 20.0
     remote_task_lock: str = "whole_task"
     max_task_minutes: int = 15
     screen_view_enabled: bool = True
@@ -103,6 +104,7 @@ class State:
     screen_last_at: dict[str, float] = field(default_factory=dict)
     screen_audit_at: dict[str, float] = field(default_factory=dict)
     bridge: DesktopBridge | None = None
+    cc: object | None = None
 
 
 PC_NAME = (__import__("socket").gethostname() or "").split(".")[0]
@@ -160,6 +162,11 @@ def create_app(settings: Settings) -> FastAPI:
     ) if settings.desktop_state_dir else None
     st.bridge = bridge
 
+    from .cc_permission import CCPermissions, load_or_create_token
+    cc = CCPermissions(manager, audit, stale_seconds=settings.cc_stale_seconds)
+    st.cc = cc
+    cc_token = load_or_create_token(settings.data_dir)
+
     pid_file = settings.data_dir / "agent.pid"
 
     async def track_agent():
@@ -175,7 +182,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def lifespan(_app):
         if reaper.reap(pid_file):
             audit.append("agent_reaped", {"why": "leftover agent from a previous hub run"})
-        tasks = [asyncio.create_task(track_agent())] + ([asyncio.create_task(bridge.run())] if bridge else [])
+        tasks = [asyncio.create_task(track_agent()), asyncio.create_task(cc.run())] +                 ([asyncio.create_task(bridge.run())] if bridge else [])
         try:
             yield
         finally:
@@ -643,6 +650,7 @@ def create_app(settings: Settings) -> FastAPI:
         return reply(ctx, [{"approvalId": a.id, "taskId": a.task_id, "tool": a.event.get("tool"),
                             "window": a.event.get("window"), "control": a.event.get("control"),
                             "action": a.event.get("action"), "crop_png_b64": a.event.get("crop_png_b64"),
+                            "detail": a.event.get("detail"), "source": a.event.get("source"),
                             "expiresAt": a.expires_at} for a in manager.pending_approvals()])
 
     @app.post("/approvals/{approval_id}")
@@ -704,5 +712,49 @@ def create_app(settings: Settings) -> FastAPI:
         allowed = await manager.gate(task.id, call)
         return {"behavior": "allow", "updatedInput": call["input"]} if allowed else \
                {"behavior": "deny", "message": "Denied by the owner (or timed out / STOP)."}
+
+    # ------------------------------------------------------------ Claude Code permission prompts (local hook)
+    def require_cc(request: Request) -> None:
+        host = request.client.host if request.client else ""
+        if host not in settings.loopback_hosts or via_proxy(request):
+            raise HTTPException(403, "local only")
+        if not secrets.compare_digest(request.headers.get("x-cc-token", ""), cc_token):
+            raise HTTPException(403, "bad token")
+
+    @app.post("/cc/permission")
+    async def cc_create(request: Request):
+        require_cc(request)
+        try:
+            payload = json.loads(await request.body())
+            assert isinstance(payload, dict)
+        except (ValueError, AssertionError):
+            raise HTTPException(400, "json object expected")
+        if manager.stopped:
+            return {"decision": "deny", "by": "phone", "reason": "STOP is active on the hub"}
+        r = await cc.create(payload)
+        return {"id": r.id, "key": r.pc_key, "info": r.info}
+
+    @app.get("/cc/permission/{rid}")
+    async def cc_wait(rid: str, request: Request, wait: float = 20.0):
+        require_cc(request)
+        out = await cc.wait(rid, request.headers.get("x-cc-key", ""), max(0.0, min(wait, 30.0)))
+        if out is None:
+            raise HTTPException(404, "no such request")
+        return out
+
+    @app.post("/cc/permission/{rid}")
+    async def cc_decide(rid: str, request: Request):
+        require_cc(request)
+        try:
+            decision = str(json.loads(await request.body())["decision"])
+            res = cc.decide_pc(rid, request.headers.get("x-cc-key", ""), decision)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(400, "decision must be allow, deny or withdrawn")
+        if res == "unknown":
+            raise HTTPException(404, "no such request")
+        if res == "forbidden":
+            raise HTTPException(403, "bad key")
+        r = cc.reqs[rid]
+        return {"result": res, "decision": r.decision, "by": r.by}
 
     return app

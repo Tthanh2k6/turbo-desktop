@@ -807,18 +807,7 @@ private data class StepSummaryResult(
     val finalOk: Boolean,
 )
 
-private fun presentActionVerb(ctx: Context, action: String): String = ctx.getString(
-    when (action) {
-        "click" -> R.string.act_click
-        "invoke" -> R.string.act_invoke
-        "type" -> R.string.act_type
-        "set_value" -> R.string.act_set_value
-        "select" -> R.string.act_select
-        "toggle" -> R.string.act_toggle
-        "press_keys" -> R.string.act_press_keys
-        else -> R.string.act_other
-    }
-)
+private fun presentActionVerb(ctx: Context, action: String): String = actionVerb(ctx, action)
 
 private fun cleanToolName(raw: String): String =
     raw.substringAfterLast("__").replace('_', ' ').trim().ifBlank { raw }
@@ -1931,7 +1920,7 @@ fun ApprovalsTab(activity: FragmentActivity) {
                 color = c.onSurface,
                 modifier = Modifier.weight(1f),
             )
-            pending.firstOrNull()?.let { first ->
+            pending.firstOrNull()?.takeIf { !it.noTimeout }?.let { first ->
                 val left = (first.expiresAt - now).toLong().coerceAtLeast(0L)
                 Row(
                     modifier = Modifier
@@ -1992,7 +1981,7 @@ fun ApprovalsTab(activity: FragmentActivity) {
                         .padding(TurboSpacing.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (index > 0) {
+                    if (index > 0 && !a.noTimeout) {
                         val left = (a.expiresAt - now).toLong().coerceAtLeast(0L)
                         Row(
                             modifier = Modifier
@@ -2017,7 +2006,8 @@ fun ApprovalsTab(activity: FragmentActivity) {
                     }
 
                     Text(
-                        text = stringResource(R.string.appr_wants, presentActionVerb(ctx, a.action), a.control),
+                        text = stringResource(if (a.fromClaudeCode) R.string.appr_wants_cc else R.string.appr_wants,
+                            presentActionVerb(ctx, a.action), a.control),
                         style = MaterialTheme.typography.titleLarge,
                         color = c.onSurface,
                     )
@@ -2037,6 +2027,22 @@ fun ApprovalsTab(activity: FragmentActivity) {
                                 color = c.onSurfaceVariant,
                             )
                         }
+                    }
+
+                    if (a.detail.isNotBlank()) {
+                        Text(
+                            text = a.detail,
+                            style = TurboType.monoCode,
+                            color = c.onSurface,
+                            maxLines = 12,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(TurboRadii.medium)
+                                .background(c.cropBg)
+                                .padding(12.dp)
+                                .testTag("approvalDetail"),
+                        )
                     }
 
                     a.cropPng?.let { bytes ->
@@ -2072,7 +2078,7 @@ fun ApprovalsTab(activity: FragmentActivity) {
 
                     HorizontalDivider(color = c.outlineVariant)
 
-                    if (currentTaskText != null) {
+                    if (currentTaskText != null && !a.fromClaudeCode) {
                         Row(verticalAlignment = Alignment.Top) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.Assignment,
@@ -2100,7 +2106,7 @@ fun ApprovalsTab(activity: FragmentActivity) {
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = stringResource(R.string.appr_timeout),
+                            text = stringResource(if (a.noTimeout) R.string.appr_no_timeout else R.string.appr_timeout),
                             style = MaterialTheme.typography.bodySmall,
                             color = c.onSurfaceVariant,
                         )

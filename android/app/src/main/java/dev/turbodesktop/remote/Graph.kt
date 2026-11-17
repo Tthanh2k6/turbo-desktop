@@ -62,7 +62,7 @@ data class Ev(val seq: Long, val type: String, val json: JSONObject) {
             "text" -> opt("text")
             "tool_call" -> c.getString(R.string.ev_tool_call, opt("tool"), opt("control").let { if (it.isEmpty()) "" else "[$it]" })
             "tool_result" -> c.getString(if (json.optBoolean("ok", true)) R.string.ev_tool_ok else R.string.ev_tool_err, summaryText(c) ?: tidy(opt("summary")))
-            "approval_request" -> c.getString(R.string.ev_approval_request, opt("action"), opt("control"), opt("window"))
+            "approval_request" -> c.getString(R.string.ev_approval_request, actionVerb(c, opt("action")), opt("control"), opt("window"))
             "approval_resolved" -> c.getString(R.string.ev_approval_resolved, word(c, opt("decision")))
             "final" -> if (json.optBoolean("ok", true)) c.getString(R.string.ev_final, opt("text")) else c.getString(R.string.ev_tool_err, opt("text"))
             "task_finished" -> c.getString(R.string.ev_finished, word(c, opt("status")))
@@ -79,7 +79,29 @@ data class Ev(val seq: Long, val type: String, val json: JSONObject) {
 }
 
 data class Approval(val id: String, val tool: String, val window: String, val control: String, val action: String,
-                    val cropPng: ByteArray?, val expiresAt: Double)
+                    val cropPng: ByteArray?, val expiresAt: Double, val detail: String = "", val source: String = "") {
+    /** Claude Code permission prompts wait for the owner: no countdown, no auto-deny. */
+    val noTimeout get() = expiresAt <= 0.0
+    val fromClaudeCode get() = source == "claude_code"
+}
+
+/** Verb for an approval/step action key (desktop actions and Claude Code prompts). */
+fun actionVerb(c: android.content.Context, action: String): String = c.getString(
+    when (action) {
+        "click" -> R.string.act_click
+        "invoke" -> R.string.act_invoke
+        "type" -> R.string.act_type
+        "set_value" -> R.string.act_set_value
+        "select" -> R.string.act_select
+        "toggle" -> R.string.act_toggle
+        "press_keys" -> R.string.act_press_keys
+        "run_command" -> R.string.act_run_command
+        "edit_file" -> R.string.act_edit_file
+        "web" -> R.string.act_web
+        "use_tool" -> R.string.act_use_tool
+        else -> R.string.act_other
+    }
+)
 
 data class Usage(val input: Long = 0, val output: Long = 0, val cacheRead: Long = 0, val cost: Double = 0.0, val tasks: Int = 0) {
     companion object {
@@ -322,7 +344,8 @@ object Graph {
                 val a = Approval(j.getString("approval_id"), j.optString("tool"), j.optString("window"),
                     j.optString("control"), j.optString("action"),
                     j.optString("crop_png_b64").takeIf { it.isNotBlank() && it != "null" }?.let { Base64.decode(it, Base64.DEFAULT) },
-                    j.optDouble("expires_at"))
+                    j.optDouble("expires_at", 0.0),
+                    j.optString("detail").takeIf { it != "null" } ?: "", j.optString("source").takeIf { it != "null" } ?: "")
                 pending.update { it.filter { x -> x.id != a.id } + a }
                 Notifier.showApproval(app, a)
             }

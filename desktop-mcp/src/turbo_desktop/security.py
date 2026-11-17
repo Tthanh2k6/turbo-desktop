@@ -122,7 +122,13 @@ def is_denied_window(process: str | None, title: str | None, class_name: str | N
         return f"deny zone [{d.rule}]: {d.reason}"
     if class_name == "Credential Dialog Xaml Host":  # hard floor: Windows credential prompts
         return "deny zone [credential-dialog]: Windows credential prompt"
+    if title and title.strip().lower() in OWNER_APPROVAL_TITLES:   # hard floor: the AI never answers its own approvals
+        return "deny zone [owner-approval]: an approval prompt only the owner may answer"
     return None
+
+
+# Dialogs that ask the OWNER to approve something an AI wants to do (hub/scripts/cc_permission_hook.py).
+OWNER_APPROVAL_TITLES = {"claude code cần duyệt", "claude code needs approval"}
 
 
 def classify_action(*, process: str | None, window_title: str | None, control_name: str | None = None,

@@ -400,6 +400,18 @@ class TaskManager:
         await emit({"type": "approval_resolved", "approval_id": aid, "decision": decision})
         return ap
 
+    async def add_external_approval(self, ev: dict) -> Approval:
+        """An approval that belongs to no hub task (a Claude Code permission prompt). It never expires; the caller
+        awaits `ap.future` and announces the result."""
+        aid = "c" + secrets.token_hex(4)
+        ap = Approval(aid, "", dict(ev), 0.0, asyncio.get_running_loop().create_future())
+        self.approvals[aid] = ap
+        await self.emit({"type": "approval_request", "approval_id": aid, "tool": ev.get("tool"),
+                         "window": ev.get("window"), "control": ev.get("control"), "action": ev.get("action"),
+                         "detail": ev.get("detail"), "source": ev.get("source"), "crop_png_b64": None,
+                         "expires_at": 0})
+        return ap
+
     def _decide(self, ap: Approval, decision: str) -> bool:
         if ap.decision is not None:
             return False

@@ -189,3 +189,12 @@ def test_local_prompt_timeout_closes_the_box():
     assert sec.local_prompt({"action": "click", "control": "x", "window": "w", "reason": "r", "rule": "id"}, timeout=1.0) is False
     assert not win32gui.FindWindow(None, sec.PROMPT_TITLE)
     assert __import__("time").time() - t0 < 6
+
+
+
+def test_owner_approval_dialog_is_a_deny_zone():
+    """Field 18/11: a phone task's agent clicked "Cho phép" in the Claude Code approval dialog. Never again."""
+    from turbo_desktop import security as sec
+    assert "owner-approval" in sec.is_denied_window("python", "Claude Code cần duyệt")
+    assert "owner-approval" in sec.is_denied_window("pythonw", "Claude Code needs approval")
+    assert sec.is_denied_window("python", "Claude Code") is None

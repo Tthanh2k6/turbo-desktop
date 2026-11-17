@@ -47,4 +47,5 @@
     <string name="biometric_title">Confirm with fingerprint or screen lock</string>
     <string name="device_name_fmt">%1$s %2$s</string>
     <string name="placeholder_ui">The UI is waiting for the mockup review (design/mockups).</string>
+    <string name="notif_approval_title_cc">Claude Code needs approval: %1$s</string>
 </resources>

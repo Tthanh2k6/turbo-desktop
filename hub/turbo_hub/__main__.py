@@ -259,12 +259,28 @@ def main(argv: list[str] | None = None) -> None:
         sub.add_parser(name)
     rv = sub.add_parser("revoke")
     rv.add_argument("device_id")
+    cch = sub.add_parser("cc-hook", help="approve Claude Code permission prompts from the phone or a PC dialog")
+    cch.add_argument("action", choices=["install", "uninstall", "status", "print"])
+    cch.add_argument("--settings", help="Claude Code settings file (default ~/.claude/settings.json)")
     for p in sub.choices.values():
         p.add_argument("--port", type=int, default=None)
     a = ap.parse_args(argv)
     dd = data_dir()
     if a.cmd == "setup":
         return cmd_setup(a, dd)
+    if a.cmd == "cc-hook":
+        from . import cc_hook_install as cch_mod
+        target = Path(a.settings) if a.settings else None
+        if a.action == "install":
+            print(f"installed in {cch_mod.install(target)} (restart open Claude Code sessions)")
+        elif a.action == "uninstall":
+            print(f"removed from {cch_mod.uninstall(target)}")
+        elif a.action == "print":
+            print(json.dumps({"hooks": {"PermissionRequest": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": cch_mod.hook_command(), "timeout": cch_mod.TIMEOUT_SECONDS}]}]}}, indent=2))
+        else:
+            print("installed" if cch_mod.installed(target) else "not installed")
+        return
     cfg = cfgmod.load_config(cfgmod.user_config_path(dd), getattr(a, "preset", None))
     a.port = a.port or cfg["server"]["port"]
 

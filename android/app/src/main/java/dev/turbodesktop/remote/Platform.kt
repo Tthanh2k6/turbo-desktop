@@ -85,8 +85,10 @@ object Notifier {
 
     fun showApproval(ctx: Context, a: Approval) {
         val n = NotificationCompat.Builder(ctx, CH_APPROVALS).setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(ctx.getString(R.string.notif_approval_title, a.control))
-            .setContentText(ctx.getString(R.string.notif_approval_text, a.action, a.control, a.window))
+            .setContentTitle(if (a.fromClaudeCode) ctx.getString(R.string.notif_approval_title_cc, a.control)
+                             else ctx.getString(R.string.notif_approval_title, a.control))
+            .setContentText(ctx.getString(R.string.notif_approval_text, actionVerb(ctx, a.action), a.control, a.window))
+            .apply { if (a.detail.isNotBlank()) setStyle(NotificationCompat.BigTextStyle().bigText(a.detail.take(600))) }
             .setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true).setContentIntent(open(ctx, idFor(a.id), a.id, null))
             .addAction(0, ctx.getString(R.string.notif_deny), open(ctx, idFor(a.id) + 1, a.id, "deny"))
