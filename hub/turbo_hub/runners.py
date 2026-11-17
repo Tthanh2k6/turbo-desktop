@@ -176,12 +176,36 @@ def fill_command(template: list[str], **values: str) -> list[str]:
     return out
 
 
-def build_claude_command(claude: str, mcp_config_path: str, template: list[str] | None = None) -> list[str]:
-    """One long-lived process per session: follow-up tasks are extra user messages on stdin (no cold start)."""
-    tpl = template or [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                       "--mcp-config", "{mcp_config}", "--strict-mcp-config", "--tools", "",
-                       "--permission-prompt-tool", "{approval_tool}"]
-    return fill_command(tpl, mcp_config=mcp_config_path, approval_tool=APPROVAL_TOOL)
+# Without this the agent took tasks as chat addressed to itself: "send a message to Claude in VS Code" was answered
+# with "your message reached me" instead of typing into the VS Code chat (real-phone run, 17/11).
+OPERATOR_PROMPT = (
+    "You operate this Windows PC for its owner, who sends tasks from the turbo-desktop phone app. "
+    "Every message is a task to carry out ON THE DESKTOP with the `desktop` MCP tools (launch apps, read windows, "
+    "click, type), not a chat with you. Read it the way the owner sitting at the PC would mean it: apps named in the "
+    "task, including another Claude, ChatGPT or Copilot chat inside VS Code, a browser or Zalo, are windows on this PC. "
+    "Find that window and do the action there; for 'send/gửi X to <app>' type X into that app's message box and send it. "
+    "You are not that other assistant: never decide a task is already done because it mentions Claude. "
+    "Only touch what the task needs. If the request is genuinely ambiguous or risky, ask one short question instead "
+    "of guessing. When done, reply in the owner's language in 1-3 short sentences: what you did and what you saw.")
+
+
+def build_claude_command(claude: str, mcp_config_path: str, template: list[str] | None = None,
+                         system_prompt: str | None = None, model: str | None = None) -> list[str]:
+    """One long-lived process per session: follow-up tasks are extra user messages on stdin (no cold start).
+    A custom template gets the prompt/model only through its own {system_prompt}/{model} placeholders."""
+    prompt = OPERATOR_PROMPT if system_prompt is None else system_prompt
+    if template:
+        tpl = list(template)
+    else:
+        tpl = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+               "--mcp-config", "{mcp_config}", "--strict-mcp-config", "--tools", "",
+               "--permission-prompt-tool", "{approval_tool}"]
+        if prompt:
+            tpl += ["--append-system-prompt", "{system_prompt}"]
+        if model:
+            tpl += ["--model", "{model}"]
+    return fill_command(tpl, mcp_config=mcp_config_path, approval_tool=APPROVAL_TOOL, system_prompt=prompt or "",
+                        model=model or "")
 
 
 def user_frame(text: str) -> bytes:
@@ -203,8 +227,9 @@ class ClaudeRunner:
 
     def __init__(self, hub_url: str, internal_token: str, extra_mcp_config: str | None = None,
                  claude_path: str | None = None, spawn=None, command: list[str] | None = None,
-                 server_env: dict | None = None):
+                 server_env: dict | None = None, system_prompt: str | None = None, model: str | None = None):
         self.server_env = server_env or {}
+        self.system_prompt, self.model = system_prompt, model
         self.command = command or None
         self.hub_url, self.internal_token = hub_url, internal_token
         self.extra_mcp_config = extra_mcp_config
@@ -230,7 +255,8 @@ class ClaudeRunner:
 
     async def _ensure(self):
         if self.proc is None or self.proc.returncode is not None:
-            self.proc = await self.spawn(build_claude_command(self.claude_path or "claude", self.write_mcp_config(), self.command))
+            self.proc = await self.spawn(build_claude_command(self.claude_path or "claude", self.write_mcp_config(), self.command,
+                                                         self.system_prompt, self.model))
             self.spawn_count += 1
             if getattr(self.proc, "pid", None) and self.spawn is _spawn_real:
                 from . import reaper

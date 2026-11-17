@@ -117,6 +117,10 @@ command = []
 parser = "text"
 # Optional MCP config file with the desktop and browser servers (claude mode).
 mcp_config = ""
+# Claude mode: model for the agent ("" = Claude Code's default, e.g. "sonnet" or "haiku" to spend less quota).
+model = ""
+# Claude mode: extra system prompt. "" = the built-in operator prompt (tasks are desktop actions, not chat).
+system_prompt = ""
 
 [presets.easy]
 # the defaults above ("Thoáng")

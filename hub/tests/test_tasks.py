@@ -488,3 +488,15 @@ def test_lock_wrapper_child_is_not_blocked_by_its_parent(tmp_path, monkeypatch):
     r = subprocess.run([sys.executable, str(scripts / "with_lock.py"), "--", sys.executable, "-c", code], env=env,
                        capture_output=True, text=True, timeout=60)
     assert "child ok" in r.stdout, r.stdout + r.stderr
+
+
+def test_claude_command_operator_prompt_and_model():
+    from turbo_hub.runners import OPERATOR_PROMPT
+    cmd = build_claude_command("claude", "cfg.json")
+    assert cmd[cmd.index("--append-system-prompt") + 1] == OPERATOR_PROMPT
+    assert "--model" not in cmd
+    cmd = build_claude_command("claude", "cfg.json", system_prompt="be brief", model="sonnet")
+    assert cmd[cmd.index("--append-system-prompt") + 1] == "be brief" and cmd[cmd.index("--model") + 1] == "sonnet"
+    assert "--append-system-prompt" not in build_claude_command("claude", "cfg.json", system_prompt="")
+    custom = build_claude_command("claude", "cfg.json", ["a", "{mcp_config}"], system_prompt="x", model="m")
+    assert custom == ["a", "cfg.json"]   # a custom template only gets what it asks for via placeholders
