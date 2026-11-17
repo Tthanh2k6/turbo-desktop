@@ -12,7 +12,7 @@ from typing import Callable
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
-from . import crypto, reaper, totp
+from . import crypto, reaper, screen, totp
 from .audit import AuditLog
 from contextlib import asynccontextmanager
 
@@ -54,6 +54,13 @@ class Settings:
     require_access_header: bool = False
     system_state: Callable | None = None   # async () -> dict (desktop-mcp system_state)
     internal_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    remote_task_lock: str = "whole_task"
+    max_task_minutes: int = 15
+    screen_view_enabled: bool = True
+    screen_view_max_fps: float = 2.0
+    secret_title_patterns: tuple[str, ...] = tuple(screen.SECRET_TITLE_PATTERNS)
+    screen_grabber: Callable | None = None
+    window_enumerator: Callable | None = None
 
 
 @dataclass
@@ -93,6 +100,9 @@ class State:
     task_tokens: dict[str, str] = field(default_factory=dict)
     started: int = 0
     totp_window_exp: float = 0.0   # enrolment window: the phone may fetch the otpauth secret once until then
+    screen_last_at: dict[str, float] = field(default_factory=dict)
+    screen_audit_at: dict[str, float] = field(default_factory=dict)
+    bridge: DesktopBridge | None = None
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -119,8 +129,32 @@ def create_app(settings: Settings) -> FastAPI:
             raw = json.dumps({k: {"device": v.device_id, "exp": v.exp} for k, v in st.sessions.items()}).encode()
             sessions_file.write_bytes(dpapi.protect(raw))
     activity = [0.0]
-    bridge = DesktopBridge(manager, settings.desktop_state_dir, settings.clock, lambda: activity[0]) \
-        if settings.desktop_state_dir else None
+
+    def lock_remote_task_cfg() -> str:
+        if settings.remote_task_lock != "whole_task":
+            return settings.remote_task_lock
+        return str(settings.policy.get("lockRemoteTask", settings.remote_task_lock))
+
+    def screen_view_cfg() -> dict:
+        sv = settings.policy.get("screenView") or {}
+        if not settings.screen_view_enabled:
+            enabled = False
+        elif "enabled" in sv:
+            enabled = bool(sv["enabled"])
+        elif settings.policy.get("preset") == "strict":
+            enabled = False
+        else:
+            enabled = True
+        fps = sv.get("maxFps", settings.screen_view_max_fps)
+        fps_val = int(fps) if float(fps).is_integer() else float(fps)
+        return {"enabled": enabled, "maxFps": fps_val}
+
+    bridge = DesktopBridge(
+        manager, settings.desktop_state_dir, settings.clock, lambda: activity[0],
+        remote_task=lock_remote_task_cfg,
+        max_task_minutes=lambda: settings.max_task_minutes,
+    ) if settings.desktop_state_dir else None
+    st.bridge = bridge
 
     pid_file = settings.data_dir / "agent.pid"
 
@@ -446,7 +480,9 @@ def create_app(settings: Settings) -> FastAPI:
         """What the app must ask for before it can open a session (no session needed)."""
         return reply(ctx, {"preset": settings.policy.get("preset", ""),
                            "needs": {"totp": settings.totp_required, "biometric": settings.biometric_required},
-                           "sessionHours": settings.policy.get("sessionHours", settings.session_ttl / 3600)})
+                           "sessionHours": settings.policy.get("sessionHours", settings.session_ttl / 3600),
+                           "screenView": screen_view_cfg(),
+                           "lockRemoteTask": lock_remote_task_cfg()})
 
     def not_proxied(request: Request) -> None:
         if via_proxy(request):
@@ -488,11 +524,48 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/status")
     async def status(ctx: Ctx = Depends(in_session)):
         t = manager.running_task()
+        sv = screen_view_cfg()
+        lrt = lock_remote_task_cfg()
+        pol = {**settings.policy, "screenView": sv, "lockRemoteTask": lrt}
         return reply(ctx, {"stopped": manager.stopped, "running": t.id if t else None,
-                           "paused": manager.paused, "policy": settings.policy, "inputLock": manager.input_lock, "indicator": manager.indicator,
+                           "paused": manager.paused, "policy": pol,
+                           "screenView": sv, "lockRemoteTask": lrt,
+                           "inputLock": manager.input_lock, "indicator": manager.indicator,
                            "usage": {"session": manager.session_usage,
                                      "today": manager.daily_usage.get(_today(now()), {})},
                            "pendingApprovals": len(manager.pending_approvals()), "now": int(now())})
+
+    @app.get("/screen.jpg")
+    async def get_screen_jpg(w: int = 960, q: int = 60, ctx: Ctx = Depends(in_session)):
+        sv = screen_view_cfg()
+        if not sv["enabled"]:
+            return reply(ctx, {"detail": "screen view is off"}, 403)
+        t = now()
+        max_fps = float(sv["maxFps"])
+        min_interval = (1.0 / max_fps) if max_fps > 0 else 0.0
+        last = st.screen_last_at.get(ctx.device_id)
+        if last is not None and t - last < min_interval:
+            return reply(ctx, {"detail": "rate limit exceeded"}, 429)
+        st.screen_last_at[ctx.device_id] = t
+        jpeg, redacted = await asyncio.to_thread(   # capture + encode off the event loop
+            screen.capture_screen_jpeg,
+            max_width=w,
+            quality=q,
+            patterns=settings.secret_title_patterns,
+            grabber=settings.screen_grabber,
+            window_enumerator=settings.window_enumerator,
+        )
+        last_audit = st.screen_audit_at.get(ctx.device_id)
+        if last_audit is None or t - last_audit >= 60.0:
+            st.screen_audit_at[ctx.device_id] = t
+            audit.append("screen_view", {"device": ctx.device_id, "redacted": redacted})
+        if settings.desktop_state_dir:
+            settings.desktop_state_dir.mkdir(parents=True, exist_ok=True)
+            tmp = settings.desktop_state_dir / "screen_view.json.tmp"
+            tmp.write_text(json.dumps({"until": t + 5}), "utf-8")
+            tmp.replace(settings.desktop_state_dir / "screen_view.json")
+        headers = {"X-Redacted": str(redacted), **sign_response(ctx.nonce, ctx.path_qs, 200, jpeg)}
+        return Response(jpeg, status_code=200, media_type="image/jpeg", headers=headers)
 
     # ------------------------------------------------------------ tasks
     @app.post("/tasks")
@@ -503,14 +576,17 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(400, "text required")
         if not text or len(text) > 4000:
             raise HTTPException(400, "text empty or too long")
+        if running := manager.running_task():
+            return reply(ctx, {"detail": "busy", "running": running.id}, 409)
         try:
             task = await manager.start_task(text, ctx.device_id)
         except RuntimeError:
             return reply(ctx, {"error": "stopped"}, 423)
         except PcLocked as e:
             return reply(ctx, {"error": "pc_locked", "message": str(e)}, 423)
-        except ValueError as e:
-            return reply(ctx, {"error": str(e)}, 409)
+        except ValueError:
+            running = manager.running_task()
+            return reply(ctx, {"detail": "busy", "running": running.id if running else None}, 409)
         return reply(ctx, {"taskId": task.id})
 
     @app.get("/tasks")

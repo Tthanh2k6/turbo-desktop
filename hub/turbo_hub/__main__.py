@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 
-from . import config as cfgmod
+from . import config as cfgmod, screen
 from .app import Settings, create_app
 from .audit import AuditLog
 from .runners import ClaudeRunner, FakeRunner, GenericRunner, find_claude
@@ -142,6 +142,13 @@ def build_settings(cfg: dict, dd: Path, runner_kind: str, public_url: str | None
         cmd = agent.get("command") or cfgmod.default_agent_command("oneshot", find_claude())
         factory = lambda: GenericRunner(cmd, agent.get("parser", "text"))  # noqa: E731
     conns = tuple(cfg["server"]["connections"])
+    sv = cfg.get("screen_view") or {}
+    sv_enabled = bool(sv.get("enabled", cfg["preset"] != "strict"))
+    sv_max_fps = sv.get("max_fps", 2)
+    il = cfg.get("input_lock") or {}
+    remote_task = str(il.get("remote_task", "whole_task"))
+    max_task_min = int(il.get("max_task_minutes", 15))
+    patterns = tuple((cfg.get("privacy") or {}).get("secret_title_patterns") or screen.SECRET_TITLE_PATTERNS)
     return Settings(
         data_dir=dd, runner_factory=factory, approval_timeout=float(cfg["approval"]["timeout_seconds"]),
         session_ttl=float(cfg["session"]["hours"]) * 3600, pair_code_ttl=float(cfg["auth"]["pairing_window_minutes"]) * 60,
@@ -150,10 +157,15 @@ def build_settings(cfg: dict, dd: Path, runner_kind: str, public_url: str | None
         desktop_state_dir=dd / "desktop-state",
         policy={"preset": cfg["preset"], "totp": bool(cfg["auth"]["totp"]), "biometric": bool(cfg["auth"]["biometric"]),
                 "sessionHours": cfg["session"]["hours"], "lockMode": cfg["input_lock"]["mode"],
+                "lockRemoteTask": remote_task,
+                "screenView": {"enabled": sv_enabled, "maxFps": sv_max_fps},
                 "border": bool(cfg["indicator"]["border"]), "cfAccess": bool(cfg["cloudflare"]["require_access"]),
                 "ask": cfg["approval"]["enabled"]}, totp_required=bool(cfg["auth"]["totp"]),
         biometric_required=bool(cfg["auth"]["biometric"]), persist_sessions=bool(cfg["session"].get("persist", False)), connections=conns,
-        require_access_header=bool(cfg["cloudflare"]["require_access"]))
+        require_access_header=bool(cfg["cloudflare"]["require_access"]),
+        remote_task_lock=remote_task, max_task_minutes=max_task_min,
+        screen_view_enabled=sv_enabled, screen_view_max_fps=float(sv_max_fps),
+        secret_title_patterns=patterns)
 
 
 def cmd_setup(a, dd: Path) -> None:

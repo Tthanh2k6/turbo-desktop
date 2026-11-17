@@ -492,6 +492,7 @@ def test_lock_wrapper_child_is_not_blocked_by_its_parent(tmp_path, monkeypatch):
 
 def test_claude_command_operator_prompt_and_model():
     from turbo_hub.runners import OPERATOR_PROMPT
+    assert "Close any window you opened only to look for something before you finish." in OPERATOR_PROMPT
     cmd = build_claude_command("claude", "cfg.json")
     assert cmd[cmd.index("--append-system-prompt") + 1] == OPERATOR_PROMPT
     assert "--model" not in cmd
@@ -500,3 +501,124 @@ def test_claude_command_operator_prompt_and_model():
     assert "--append-system-prompt" not in build_claude_command("claude", "cfg.json", system_prompt="")
     custom = build_claude_command("claude", "cfg.json", ["a", "{mcp_config}"], system_prompt="x", model="m")
     assert custom == ["a", "cfg.json"]   # a custom template only gets what it asks for via placeholders
+
+
+def test_task_active_heartbeat_and_owner_took_over(tmp_path):
+    from fastapi.testclient import TestClient
+    from turbo_hub.app import Settings, create_app
+    state = tmp_path / "state"
+
+    class Clk:
+        t = time.time()
+        def __call__(self):
+            return self.t
+
+    clk = Clk()
+    script_holder = [[{"type": "sleep", "s": 30}]]
+    app = create_app(Settings(data_dir=tmp_path / "h", clock=clk, runner_factory=lambda: FR2(script_holder[0]),
+                              approval_engine="desktop-mcp", desktop_state_dir=state,
+                              loopback_hosts=("127.0.0.1", "testclient")))
+    with TestClient(app) as http:
+        hub = app.state.hub
+        info = http.post("/admin/pairing", headers={"X-Admin-Token": hub.store.admin_token}).json()
+        d = DevClientCls(http, hub_pub=info["hubKey"], clock=clk)
+        assert d.pair(info["code"]).status_code == 200
+        assert d.start_session(hub.store.totp_secret).status_code == 200
+
+        # 1) Phone task writes task_active.json atomically and refreshes heartbeat every 5 s
+        r = d.request("POST", "/tasks", {"text": "work"})
+        assert r.status_code == 200
+        tid = r.json()["taskId"]
+        ta_file = state / "task_active.json"
+        assert ta_file.exists()
+        ta0 = json.loads(ta_file.read_text("utf-8"))
+        assert ta0["task"] == tid and ta0["source"] == "phone" and ta0["max_minutes"] == 15
+        assert ta0["since"] == ta0["heartbeat"] == clk.t
+
+        clk.t += 6.0
+        end = time.time() + 3
+        while time.time() < end and json.loads(ta_file.read_text("utf-8"))["heartbeat"] < clk.t:
+            time.sleep(0.05)
+        ta1 = json.loads(ta_file.read_text("utf-8"))
+        assert ta1["since"] == ta0["since"] and ta1["heartbeat"] == clk.t
+
+        # 2) owner_took_over.json pauses the task, emits taken_over, and deletes both files
+        took = state / "owner_took_over.json"
+        took.write_text("{}", "utf-8")
+        end = time.time() + 3
+        while time.time() < end and (took.exists() or ta_file.exists() or not hub.manager.paused):
+            time.sleep(0.05)
+        assert not took.exists() and not ta_file.exists() and hub.manager.paused
+        evs = d.request("GET", "/events/poll?since=0").json()
+        assert any(e["type"] == "taken_over" for e in evs)
+
+        # Resume restores task_active.json, then STOP deletes it
+        assert d.request("POST", "/resume", {}).status_code == 200
+        assert ta_file.exists()
+        assert d.request("POST", "/stop", {}).status_code == 200
+        assert not ta_file.exists()
+        assert d.request("POST", "/resume", {}).status_code == 200
+
+        # 3) Normal task completion deletes task_active.json
+        script_holder[0] = [{"type": "final", "text": "done"}]
+        assert d.request("POST", "/tasks", {"text": "quick"}).status_code == 200
+        end = time.time() + 3
+        while time.time() < end and hub.manager.running_task() is not None:
+            time.sleep(0.03)
+        assert not ta_file.exists()
+
+        # 4) Local admin `run` and remote_task = "real_input" do not write task_active.json
+        script_holder[0] = [{"type": "sleep", "s": 30}]
+        tok = {"X-Admin-Token": hub.store.admin_token}
+        assert http.post("/admin/tasks", json={"text": "local"}, headers=tok).status_code == 200
+        assert not ta_file.exists()
+        assert http.post("/admin/stop", headers=tok).status_code == 200
+        assert http.post("/admin/resume", headers=tok).status_code == 200
+
+        hub.settings.remote_task_lock = "real_input"
+        assert d.request("POST", "/tasks", {"text": "remote-real-input"}).status_code == 200
+        assert not ta_file.exists()
+        d.request("POST", "/stop", {})
+
+
+def test_two_posts_back_to_back_runner_never_called_twice(tmp_path):
+    active = 0
+    max_active = 0
+    calls = 0
+
+    class CountingRunner:
+        async def run(self, task_id, text, emit, gate):
+            nonlocal active, max_active, calls
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.25)
+                await emit({"type": "final", "text": "ok", "ok": True})
+                return "done"
+            finally:
+                active -= 1
+
+        async def kill(self):
+            pass
+
+    from fastapi.testclient import TestClient
+    from turbo_hub.app import Settings, create_app
+    clk = lambda: time.time()  # noqa: E731
+    app = create_app(Settings(data_dir=tmp_path / "h", clock=clk, runner_factory=CountingRunner,
+                              loopback_hosts=("127.0.0.1", "testclient")))
+    with TestClient(app) as http:
+        hub = app.state.hub
+        info = http.post("/admin/pairing", headers={"X-Admin-Token": hub.store.admin_token}).json()
+        d = DevClientCls(http, hub_pub=info["hubKey"], clock=clk)
+        assert d.pair(info["code"]).status_code == 200
+        assert d.start_session(hub.store.totp_secret).status_code == 200
+        r1 = d.request("POST", "/tasks", {"text": "first"})
+        r2 = d.request("POST", "/tasks", {"text": "second"})
+        assert r1.status_code == 200
+        tid = r1.json()["taskId"]
+        assert r2.status_code == 409 and r2.json() == {"detail": "busy", "running": tid}
+        end = time.time() + 5
+        while time.time() < end and hub.manager.running_task() is not None:
+            time.sleep(0.03)
+        assert calls == 1 and max_active == 1

@@ -25,15 +25,22 @@ def test_default_is_easy_local_only():
     assert cfg["session"]["hours"] == 12 and not cfg["auth"]["totp"] and not cfg["auth"]["biometric"]
     assert cfg["approval"]["enabled"] == ["permanent_delete", "payment", "uninstall", "windows_security"]
     assert cfg["deny_zones"]["password_managers"] is False
+    assert cfg["input_lock"]["remote_task"] == "whole_task" and cfg["input_lock"]["max_task_minutes"] == 15
+    assert cfg["screen_view"] == {"enabled": True, "max_fps": 2}
+    assert r"\.env(\.|\b)" in cfg["privacy"]["secret_title_patterns"] and "mật khẩu" in cfg["privacy"]["secret_title_patterns"]
 
 
 def test_presets_balanced_and_strict():
     b = C.load_config(None, "balanced")
     assert b["session"]["hours"] == 2 and b["auth"]["totp"] and not b["auth"]["biometric"]
     assert b["server"]["connections"] == ["local", "lan", "tailscale"] and b["deny_zones"]["banking"]
+    assert b["input_lock"]["remote_task"] == "whole_task" and b["input_lock"]["max_task_minutes"] == 15
+    assert b["screen_view"] == {"enabled": True, "max_fps": 2}
     s = C.load_config(None, "strict")
     assert s["auth"]["biometric"] and s["cloudflare"]["require_access"] and "cloudflare" in s["server"]["connections"]
     assert "task_manager" in s["approval"]["enabled"] and s["deny_zones"]["windows_security_app"]
+    assert s["input_lock"]["remote_task"] == "whole_task" and s["input_lock"]["max_task_minutes"] == 15
+    assert s["screen_view"] == {"enabled": False, "max_fps": 2}
     with pytest.raises(ValueError):
         C.load_config(None, "nope")
 

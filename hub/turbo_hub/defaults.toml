@@ -94,8 +94,25 @@ banking_windows = ["internet banking", "ngân hàng", "vietcombank", "techcomban
 #   "real_input"  lock only while real input is being sent (Easy, Balanced)
 #   "whole_task"  lock for the whole task (Strict)
 mode = "real_input"
+# For tasks started from a phone (rather than local `turbo_hub run`):
+#   "whole_task"  hold the lock and solid glow for the whole task via task_active.json (default in all presets)
+#   "real_input"  do not write task_active.json; only lock during real input as in `mode`
+remote_task = "whole_task"
+max_task_minutes = 15      # hard cap in minutes for a remote whole-task lock before releasing and pausing
 max_seconds = 60           # a lock never lasts longer than this, then it releases by itself
 banner = true              # show the on-screen banner while locked
+
+[screen_view]
+# Live primary-monitor view on the phone (GET /screen.jpg). Secret windows are blacked out before encoding.
+enabled = true             # true in Easy and Balanced, false in Strict
+max_fps = 2                # rate limit per device in frames per second (faster requests get 429)
+
+[privacy]
+# Visible top-level windows whose titles match any of these case-insensitive regexes are blacked out in /screen.jpg.
+secret_title_patterns = [
+    "\\.env(\\.|\\b)", "secrets?", "credentials", "\\.pem\\b", "\\.key\\b", "id_rsa", "\\.kdbx", "token",
+    "password", "mật khẩu", "api[_-]?key",
+]
 
 [indicator]
 # While the AI controls the PC the desktop MCP draws a glowing border around every screen edge (brighter, plus a banner,
@@ -148,6 +165,10 @@ totp = true
 biometric = true
 [presets.strict.input_lock]
 mode = "whole_task"
+remote_task = "whole_task"
+max_task_minutes = 15
+[presets.strict.screen_view]
+enabled = false
 [presets.strict.cloudflare]
 require_access = true
 [presets.strict.approval]

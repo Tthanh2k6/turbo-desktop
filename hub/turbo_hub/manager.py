@@ -32,6 +32,7 @@ class Task:
     status: str = "running"  # running | done | failed | stopped
     started_at: float = 0.0
     finished_at: float | None = None
+    source: str = "phone"
     token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     usage: dict = field(default_factory=lambda: _blank_usage())
     live: dict = field(default_factory=dict)   # message id -> usage seen so far (deduplicated)
@@ -45,6 +46,8 @@ class TaskManager:
         self.engine = engine
         self.on_stop = lambda stopped: None
         self.on_takeover = lambda active: None   # bridge hook: RELEASE file for the desktop MCP
+        self.on_task_start = lambda task: None
+        self.on_task_end = lambda task: None
         self.paused = False
         self._resume_evt = asyncio.Event()
         self._resume_evt.set()
@@ -110,9 +113,15 @@ class TaskManager:
             raise RuntimeError("stopped")
         if self.running_task():
             raise ValueError("a task is already running")
-        warnings = await self._check_pc()
-        task = Task(id="t" + secrets.token_hex(4), text=text, started_at=self.clock())
+        source = "local" if device_id == "local-admin" else "phone"
+        task = Task(id="t" + secrets.token_hex(4), text=text, started_at=self.clock(), source=source)
         self.tasks[task.id] = task
+        try:
+            warnings = await self._check_pc()
+        except BaseException:
+            self.tasks.pop(task.id, None)
+            raise
+        self.on_task_start(task)
         self.audit.append("task_start", {"task": task.id, "device": device_id, "text": text[:500]})
         await self.emit({"type": "task_started", "task_id": task.id, "text": text})
         for w in warnings:
@@ -150,6 +159,7 @@ class TaskManager:
             if task.status == "running":
                 task.status = "stopped" if self.stopped else status
             task.finished_at = self.clock()
+            self.on_task_end(task)
             self.audit.append("task_end", {"task": task.id, "status": task.status})
             if not self.indicator_external and not self.input_lock.get("locked"):
                 await self.set_indicator("idle")
@@ -280,13 +290,13 @@ class TaskManager:
                 pass
         await self.emit({"type": "stopped"})
 
-    async def takeover(self, device_id: str) -> None:
+    async def takeover(self, device_id: str, reason: str | None = None) -> None:
         """'Take over': release the input lock now and pause the run (the next tool call waits until resume)."""
         self.paused = True
         self._resume_evt.clear()
         self.on_takeover(True)
-        self.audit.append("takeover", {"device": device_id})
-        await self.emit({"type": "taken_over"})
+        self.audit.append("takeover", {"device": device_id, **({"reason": reason} if reason else {})})
+        await self.emit({"type": "taken_over", **({"reason": reason} if reason else {})})
 
     async def set_input_lock(self, state: dict) -> None:
         if state != self.input_lock:

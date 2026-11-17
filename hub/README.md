@@ -37,7 +37,9 @@ Dừng khẩn cấp: `python -m turbo_hub stop` (hoặc nút STOP trên điện 
 | Vân tay trên điện thoại | không | không | có (mở phiên + duyệt) |
 | Hỏi trước khi | xoá vĩnh viễn, thanh toán, gỡ phần mềm, cài đặt bảo mật Windows | + gửi, xoá, cài đặt, terminal | + OK trong hộp thoại xoá/thanh toán, Enter trong chat, Task Manager |
 | Vùng cấm | ô mật khẩu | + trình quản lý mật khẩu, ngân hàng | + ứng dụng Windows Security |
-| Khoá phím/chuột khi AI dùng chuột thật | khi đang dùng chuột thật | khi đang dùng chuột thật | cả việc |
+| Khoá phím/chuột (lệnh cục bộ `run`) | khi đang dùng chuột thật | khi đang dùng chuột thật | cả việc |
+| Khoá phím/chuột (việc từ điện thoại) | cả việc (tối đa 15 phút) | cả việc (tối đa 15 phút) | cả việc (tối đa 15 phút) |
+| Xem màn hình từ điện thoại (`/screen.jpg`) | bật (tối đa 2 fps) | bật (tối đa 2 fps) | tắt |
 
 Chọn lại bất cứ lúc nào: `python -m turbo_hub setup`, hoặc sửa một mục trong `turbo-desktop.toml`. Mọi mục đều có thể bật/tắt riêng.
 
@@ -117,7 +119,13 @@ Chế độ `oneshot` chạy một tiến trình mỗi việc và hiển thị t
 
 ## Hiển thị trên điện thoại
 
-Token và chi phí hiện theo việc, theo phiên và theo ngày (lấy từ kết quả của agent). Khi AI dùng chuột/phím thật, điện thoại hiện khung cam và dòng "AI đang điều khiển" hoặc "PC đang khoá phím/chuột", cùng nút **Lấy lại quyền** (mở khoá ngay và tạm dừng việc, cho chạy tiếp bằng nút Resume). Trên điện thoại Xiaomi/HyperOS, app chạy dịch vụ nền với thông báo cố định và hướng dẫn tắt tối ưu pin, bật tự khởi động; app không dùng FCM.
+Token và chi phí hiện theo việc, theo phiên và theo ngày (lấy từ kết quả của agent).
+
+- **Mỗi lúc một việc (`409 Conflict`):** Khi đang có việc chạy, `POST /tasks` trả về `409 {"detail":"busy","running":"<id>"}` để tránh hai việc dùng chung tiến trình agent.
+- **Khoá cả việc khi giao từ điện thoại (`[input_lock] remote_task = "whole_task"`, `max_task_minutes = 15`):** Từ lúc bắt đầu tới lúc xong việc từ điện thoại, hub ghi `task_active.json` (cập nhật nhịp tim mỗi 5 giây) để desktop-mcp khoá phím/chuột vật lý và giữ viền sáng suốt việc. Nhấn Esc ×3 trên PC (ghi `owner_took_over.json`) hoặc bấm **Lấy lại quyền** trên điện thoại sẽ mở khoá ngay và tạm dừng việc (chạy tiếp bằng Resume).
+- **Xem màn hình trực tiếp (`GET /screen.jpg`):** Trả về ảnh JPEG màn hình chính (ký như mọi phản hồi khác, giới hạn `[screen_view] max_fps = 2` mỗi thiết bị, tắt ở mức Chặt). Trước khi nén, hub tô đen mọi cửa sổ có tiêu đề khớp `[privacy] secret_title_patterns` (kèm header `X-Redacted`), ghi nhật ký tối đa 1 lần/phút mỗi thiết bị và ghi `screen_view.json` để PC hiện "Điện thoại đang xem màn hình".
+
+Trên điện thoại Xiaomi/HyperOS, app chạy dịch vụ nền với thông báo cố định và hướng dẫn tắt tối ưu pin, bật tự khởi động; app không dùng FCM.
 
 ## Phần nâng cao / bảo mật
 
