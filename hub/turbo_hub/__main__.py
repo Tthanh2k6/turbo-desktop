@@ -107,11 +107,24 @@ def agent_env(cfg: dict, dd: Path) -> dict:
             "TURBO_DESKTOP_STATE_DIR": str(dd / "desktop-state")}
 
 
+def default_mcp_config(dd: Path) -> str | None:
+    """No mcp_config set: use the desktop-mcp next to this hub (repo checkout) so a fresh install can act at all."""
+    root = Path(__file__).resolve().parents[2] / "desktop-mcp"
+    py = root / ".venv" / "Scripts" / "python.exe"
+    if not py.exists():
+        return None
+    path = dd / "mcp.default.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": {"desktop": {"command": str(py), "args": ["-m", "turbo_desktop"],
+                                                            "env": {"PYTHONPATH": str(root / "src")}}}}), "utf-8")
+    return str(path)
+
+
 def build_settings(cfg: dict, dd: Path, runner_kind: str, public_url: str | None, port: int, mcp_config: str | None):
     hub_local = f"http://127.0.0.1:{port}"
     internal = secrets.token_urlsafe(24)
     agent = cfg["agent"]
-    mcp = mcp_config or agent.get("mcp_config") or None
+    mcp = mcp_config or agent.get("mcp_config") or (default_mcp_config(dd) if runner_kind != "fake" else None)
     if runner_kind == "fake":
         factory = FakeRunner
     elif agent["mode"] == "claude-stream-json":
@@ -178,6 +191,14 @@ def cmd_run(a, dd: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):   # Vietnamese text in a cp1252 console or a pipe must not crash setup
+        try:
+            if not stream.isatty():
+                stream.reconfigure(encoding="utf-8")
+            else:
+                stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(prog="turbo_hub")
     ap.add_argument("--lang", choices=["vi", "en"], default=os.environ.get("TURBO_LANG", "vi"))
     sub = ap.add_subparsers(dest="cmd", required=True)
