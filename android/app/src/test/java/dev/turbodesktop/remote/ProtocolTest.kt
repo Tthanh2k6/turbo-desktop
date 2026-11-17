@@ -75,4 +75,36 @@ class ProtocolTest {
         assertTrue(Totp.looksValid("012345"))
         assertFalse(Totp.looksValid("12345")); assertFalse(Totp.looksValid("12a456"))
     }
+
+    @Test fun hubJsonParsesScreenViewAndReport() {
+        val sv = HubJson.screenView(JSONObject("""{"policy":{"screenView":{"enabled":false,"maxFps":1.5}}}"""))!!
+        assertFalse(sv.enabled)
+        assertEquals(1.5, sv.maxFps, 0.001)
+
+        val rep = HubJson.report(7, JSONObject("""{
+            "days":[{"date":"2026-11-16","done":2,"failed":1,"stopped":0,"seconds":120},{"date":"2026-11-17","done":3,"failed":0,"stopped":1,"seconds":412}],
+            "totals":{"done":5,"failed":1,"stopped":1,"seconds":532,"tokensIn":32000,"tokensOut":9000,"costUsd":0.145},
+            "topApps":[{"name":"Zalo","count":5},{"name":"Calculator","count":2}]
+        }"""))
+        assertEquals(7, rep.periodDays)
+        assertEquals(2, rep.days.size)
+        assertEquals(4, rep.days[1].totalTasks)
+        assertEquals(5, rep.totals.done)
+        assertEquals(2, rep.totals.stoppedOrFailed)
+        assertEquals(41000L, rep.totals.totalTokens)
+        assertEquals(0.145, rep.totals.costUsd, 0.0001)
+        assertEquals("Zalo", rep.topApps[0].name)
+        assertEquals(5, rep.topApps[0].count)
+    }
+
+    @Test fun canonicalResponseVerifiesOverRawBinaryJpegBytes() {
+        val kp = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val pub = Protocol.b64(kp.public.encoded)
+        val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x00, 0x10, 0x4A, 0x46, 0xFF.toByte(), 0xD9.toByte())
+        val canonical = Protocol.canonicalResponse(200, "/screen.jpg?w=960&q=60", jpegBytes, "1800000100", "noncebin")
+        val sig = Protocol.b64(Signature.getInstance("SHA256withECDSA").run { initSign(kp.private); update(canonical); sign() })
+        assertTrue(Protocol.verify(pub, canonical, sig))
+        val tampered = jpegBytes.clone().also { it[5] = 0x11 }
+        assertFalse(Protocol.verify(pub, Protocol.canonicalResponse(200, "/screen.jpg?w=960&q=60", tampered, "1800000100", "noncebin"), sig))
+    }
 }

@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <queries>
+        <package android:name="com.google.android.apps.authenticator2" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="otpauth" />
+        </intent>
+    </queries>
+
     <!-- Cleartext is allowed because the hub sits behind Tailscale (WireGuard) or HTTPS (Cloudflare) and every
          request/response is signed at the application layer. A plain http URL on the open internet is NOT safe
          for confidentiality (signatures give authenticity, not secrecy). -->
@@ -22,9 +30,10 @@
         android:localeConfig="@xml/locales_config"
         android:networkSecurityConfig="@xml/network_security"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="true"
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">

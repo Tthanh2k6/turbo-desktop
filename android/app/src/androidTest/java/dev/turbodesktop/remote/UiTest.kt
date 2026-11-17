@@ -69,16 +69,15 @@ class UiTest {
         Graph.pending.value = emptyList()
     }
 
-    @Test fun liveShowsLockedChipAndTakeOver() {
+    @Test fun liveShowsTakeOverWhileLocked() {
+        // v3: the status lives in the top bar and the locked line in the task card; the Việc screen alone must
+        // still offer "Lấy lại quyền" whenever the PC input is locked, and hide it when idle.
         Graph.indicator.value = "input_locked"; Graph.inputLocked.value = true; Graph.paused.value = false
         show { LiveTab() }
-        rule.onNodeWithTag("chipLocked").assertIsDisplayed()
-        rule.onNodeWithText(str(R.string.chip_locked)).assertIsDisplayed()
         rule.onNodeWithTag("takeover").assertIsDisplayed()
-        Graph.indicator.value = "acting"; Graph.inputLocked.value = false
+        Graph.indicator.value = "idle"; Graph.inputLocked.value = false; Graph.taskRunning.value = false
         rule.waitForIdle()
-        rule.onNodeWithText(str(R.string.chip_acting)).assertIsDisplayed()
-        Graph.indicator.value = "idle"
+        rule.onNodeWithTag("takeover").assertDoesNotExist()
     }
 
     @Test fun stopCardOffersResume() {

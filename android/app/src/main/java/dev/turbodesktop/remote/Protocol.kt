@@ -83,6 +83,41 @@ data class Needs(val totp: Boolean, val biometric: Boolean)
 /** The Authenticator key as the hub sends it from GET /totp/enroll. [secret] is base32 without padding. */
 data class TotpEnroll(val otpauth: String, val secret: String, val issuer: String, val account: String)
 
+data class ScreenViewConfig(val enabled: Boolean = true, val maxFps: Double = 2.0)
+
+data class ReportDay(
+    val date: String,
+    val done: Int,
+    val failed: Int,
+    val stopped: Int,
+    val seconds: Long,
+) {
+    val totalTasks: Int get() = done + failed + stopped
+}
+
+data class ReportTotals(
+    val done: Int = 0,
+    val failed: Int = 0,
+    val stopped: Int = 0,
+    val seconds: Long = 0L,
+    val tokensIn: Long = 0L,
+    val tokensOut: Long = 0L,
+    val costUsd: Double = 0.0,
+) {
+    val stoppedOrFailed: Int get() = stopped + failed
+    val totalTasks: Int get() = done + failed + stopped
+    val totalTokens: Long get() = tokensIn + tokensOut
+}
+
+data class ReportApp(val name: String, val count: Int)
+
+data class ReportData(
+    val periodDays: Int,
+    val days: List<ReportDay>,
+    val totals: ReportTotals,
+    val topApps: List<ReportApp>,
+)
+
 /** Parsers for hub replies, kept pure JVM so they are unit-tested. */
 object HubJson {
     /** Missing "needs" (older hub) means "ask for everything": the safe default. */
@@ -93,4 +128,51 @@ object HubJson {
 
     fun totpEnroll(o: org.json.JSONObject): TotpEnroll =
         TotpEnroll(o.getString("otpauth"), o.getString("secret"), o.optString("issuer", "turbo-desktop"), o.optString("account", "pc"))
+
+    fun screenView(o: org.json.JSONObject?): ScreenViewConfig? {
+        val sv = o?.optJSONObject("screenView") ?: o?.optJSONObject("policy")?.optJSONObject("screenView") ?: return null
+        val fps = sv.optDouble("maxFps", 2.0).let { if (it.isNaN() || it <= 0.0) 2.0 else it }
+        return ScreenViewConfig(enabled = sv.optBoolean("enabled", true), maxFps = fps)
+    }
+
+    fun report(periodDays: Int, o: org.json.JSONObject): ReportData {
+        val daysArr = o.optJSONArray("days")
+        val days = if (daysArr != null) {
+            (0 until daysArr.length()).mapNotNull { idx ->
+                daysArr.optJSONObject(idx)?.let { d ->
+                    ReportDay(
+                        date = d.optString("date"),
+                        done = d.optInt("done", 0),
+                        failed = d.optInt("failed", 0),
+                        stopped = d.optInt("stopped", 0),
+                        seconds = d.optLong("seconds", 0L),
+                    )
+                }
+            }
+        } else emptyList()
+
+        val t = o.optJSONObject("totals")
+        val costRaw = t?.optDouble("costUsd", 0.0) ?: 0.0
+        val totals = ReportTotals(
+            done = t?.optInt("done", 0) ?: 0,
+            failed = t?.optInt("failed", 0) ?: 0,
+            stopped = t?.optInt("stopped", 0) ?: 0,
+            seconds = t?.optLong("seconds", 0L) ?: 0L,
+            tokensIn = t?.optLong("tokensIn", 0L) ?: 0L,
+            tokensOut = t?.optLong("tokensOut", 0L) ?: 0L,
+            costUsd = if (costRaw.isNaN()) 0.0 else costRaw,
+        )
+
+        val appsArr = o.optJSONArray("topApps")
+        val topApps = if (appsArr != null) {
+            (0 until appsArr.length()).mapNotNull { idx ->
+                appsArr.optJSONObject(idx)?.let { a ->
+                    val name = a.optString("name").trim()
+                    if (name.isNotEmpty()) ReportApp(name = name, count = a.optInt("count", 0)) else null
+                }
+            }
+        } else emptyList()
+
+        return ReportData(periodDays = periodDays, days = days, totals = totals, topApps = topApps)
+    }
 }

@@ -39,6 +39,7 @@ class Prefs(ctx: Context) {
     var needsTotp: Boolean get() = sp.getBoolean("needsTotp", true); set(v) = sp.edit().putBoolean("needsTotp", v).apply()
     var needsBiometric: Boolean get() = sp.getBoolean("needsBiometric", true); set(v) = sp.edit().putBoolean("needsBiometric", v).apply()
     var totpEnrollPending: Boolean get() = sp.getBoolean("totpEnrollPending", false); set(v) = sp.edit().putBoolean("totpEnrollPending", v).apply()
+    var showApiCost: Boolean get() = sp.getBoolean("showApiCost", false); set(v) = sp.edit().putBoolean("showApiCost", v).apply()
     var lang: String get() = s("lang"); set(v) = put("lang", v)
     val paired get() = hubKey.isNotBlank() && deviceId.isNotBlank()
 
@@ -54,6 +55,8 @@ class HubError(val kind: ErrKind, message: String, val status: Int = 0) : Except
 data class Reply(val status: Int, val body: String, val via: String) {
     fun json() = JSONObject(body)
 }
+
+data class BytesReply(val status: Int, val bytes: ByteArray, val via: String, val redacted: Int = 0)
 
 /**
  * Signed HTTP client for the hub. Tries each configured transport in order (Tailscale first, Cloudflare second),
@@ -126,6 +129,29 @@ class HubClient(
                         r.header("Location"), label, prefs.hubKey)
                     prefs.activePath = label
                     return@withContext reply
+                }
+            } catch (e: IOException) {
+                last = e
+            }
+        }
+        throw HubError(ErrKind.NETWORK, "Hub unreachable: ${last?.message}")
+    }
+
+    /** Signed binary GET (e.g. /screen.jpg): reuses [build] and [checkReply] to verify the signature over raw bytes. */
+    suspend fun callBytes(path: String, session: Boolean = true): BytesReply = withContext(Dispatchers.IO) {
+        val list = transports()
+        if (list.isEmpty()) throw HubError(ErrKind.NETWORK, "No hub URL configured")
+        var last: IOException? = null
+        for ((label, base) in list) {
+            try {
+                val (req, nonce, _) = build(base, label, "GET", path, null, strong = false, session = session)
+                http.newCall(req).execute().use { r ->
+                    val bytes = r.body?.bytes() ?: ByteArray(0)
+                    checkReply(r.code, path, bytes, r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce,
+                        r.header("Location"), label, prefs.hubKey)
+                    prefs.activePath = label
+                    val redacted = r.header("X-Redacted")?.toIntOrNull() ?: 0
+                    return@withContext BytesReply(r.code, bytes, label, redacted)
                 }
             } catch (e: IOException) {
                 last = e

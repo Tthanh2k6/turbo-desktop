@@ -102,6 +102,20 @@ object Notifier {
 
     fun cancelApproval(ctx: Context, approvalId: String) =
         ctx.getSystemService(NotificationManager::class.java).cancel(idFor(approvalId))
+
+    fun showTaskFinished(ctx: Context, statusWord: String, summary: String? = null) {
+        val builder = NotificationCompat.Builder(ctx, CH_STATUS)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(ctx.getString(R.string.notif_task_finished_title, statusWord))
+            .setAutoCancel(true)
+            .setContentIntent(open(ctx, 8, null, null))
+        val clean = summary?.trim().orEmpty()
+        if (clean.isNotEmpty()) {
+            builder.setContentText(clean.take(140))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(clean.take(500)))
+        }
+        try { ctx.getSystemService(NotificationManager::class.java).notify(2, builder.build()) } catch (_: SecurityException) {}
+    }
 }
 
 /** Foreground service: keeps the process alive so the single hub connection (SSE) survives on aggressive ROMs. No FCM. */
@@ -154,6 +168,24 @@ fun openInAuthenticator(ctx: Context, otpauth: String): Boolean = try {
     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(otpauth)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     true
 } catch (e: android.content.ActivityNotFoundException) { false }
+
+/** Launches an installed Authenticator app without importing a key (for viewing the current 6-digit code). */
+fun launchAuthenticatorApp(ctx: Context): Boolean {
+    val pm = ctx.packageManager
+    val probe = Intent(Intent.ACTION_VIEW, Uri.parse("otpauth://totp/probe?secret=AAAA"))
+    val candidates = buildList {
+        add("com.google.android.apps.authenticator2")
+        pm.queryIntentActivities(probe, 0).forEach { add(it.activityInfo.packageName) }
+    }.distinct()
+    for (pkg in candidates) {
+        val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
+        try {
+            ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        } catch (_: Exception) {}
+    }
+    return false
+}
 
 /** Copies a secret to the clipboard; on Android 13+ marks it sensitive so the preview toast and keyboard history hide it. */
 fun copySensitive(ctx: Context, label: String, text: String) {

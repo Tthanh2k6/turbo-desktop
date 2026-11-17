@@ -123,6 +123,16 @@ object Graph {
     val needs = MutableStateFlow(Needs(totp = true, biometric = true))
     /** True right after pairing when the hub opened its enrolment window: the UI offers "Add to Authenticator". */
     val totpEnrollPending = MutableStateFlow(false)
+    val screenViewEnabled = MutableStateFlow(true)
+    val screenViewMaxFps = MutableStateFlow(2.0)
+    val lockRemoteTask = MutableStateFlow("")
+    val screenFrame = MutableStateFlow<ByteArray?>(null)
+    val screenFrameAtMs = MutableStateFlow(0L)
+    val screenRedacted = MutableStateFlow(0)
+    val report = MutableStateFlow<ReportData?>(null)
+    val reportLoading = MutableStateFlow(false)
+    val reportError = MutableStateFlow(false)
+    val showApiCost = MutableStateFlow(false)
     private var conn: Job? = null
     private var lastSeq = 0L
 
@@ -138,7 +148,24 @@ object Graph {
         sessionId.value = prefs.sessionId
         needs.value = Needs(prefs.needsTotp, prefs.needsBiometric)
         totpEnrollPending.value = prefs.totpEnrollPending
+        showApiCost.value = prefs.showApiCost
+        if (prefs.preset == "strict") screenViewEnabled.value = false
         Notifier.createChannels(app)
+    }
+
+    fun setShowApiCost(enabled: Boolean) {
+        prefs.showApiCost = enabled
+        showApiCost.value = enabled
+    }
+
+    private fun applyHubMeta(j: JSONObject) {
+        HubJson.screenView(j)?.let { sv ->
+            screenViewEnabled.value = sv.enabled
+            screenViewMaxFps.value = sv.maxFps
+        }
+        val lrt = j.optString("lockRemoteTask").takeIf { it.isNotBlank() && it != "null" }
+            ?: j.optJSONObject("policy")?.optString("lockRemoteTask")?.takeIf { it.isNotBlank() && it != "null" }
+        if (lrt != null) lockRemoteTask.value = lrt
     }
 
     val sessionOpen get() = prefs.sessionId.isNotBlank() && prefs.sessionExp > System.currentTimeMillis() / 1000
@@ -147,7 +174,7 @@ object Graph {
     fun fail(e: Throwable): String {
         val msg = when {
             e is HubError && e.kind == ErrKind.ACCESS_LOGIN -> { needAccessLogin.value = true; app.getString(R.string.st_access_login) }
-            e is HubError -> e.message ?: "Lỗi"
+            e is HubError -> e.message ?: app.getString(R.string.st_error_generic)
             else -> e.message ?: e.javaClass.simpleName
         }
         status.value = msg
@@ -168,7 +195,20 @@ object Graph {
     } catch (e: Exception) { fail(e); false }
 
     fun unpairLocal() {
-        conn?.cancel(); prefs.unpairLocal(); sessionId.value = ""; sessionExp.value = 0; online.value = false; events.value = emptyList()
+        conn?.cancel()
+        prefs.unpairLocal()
+        sessionId.value = ""
+        sessionExp.value = 0
+        online.value = false
+        events.value = emptyList()
+        screenFrame.value = null
+        screenFrameAtMs.value = 0L
+        screenRedacted.value = 0
+        report.value = null
+        taskRunning.value = false
+        paused.value = false
+        inputLocked.value = false
+        indicator.value = "idle"
         HubService.stop(app)
     }
 
@@ -190,13 +230,19 @@ object Graph {
 
     private fun setNeeds(n: Needs) { needs.value = n; prefs.needsTotp = n.totp; prefs.needsBiometric = n.biometric }
 
-    /** Signed GET /policy (no session): learns whether the 2FA code and the fingerprint are required. */
+    /** Signed GET /policy (no session): learns whether the 2FA code and the fingerprint are required, plus screenView & lock mode. */
     suspend fun refreshPolicy(): Boolean = try {
         val r = client.call("GET", "/policy", session = false)
-        if (r.status == 200) { setNeeds(HubJson.needs(r.json())); true } else false
+        if (r.status == 200) {
+            val j = r.json()
+            online.value = true
+            via.value = prefs.activePath
+            setNeeds(HubJson.needs(j))
+            applyHubMeta(j)
+            if (policy.value == null) policy.value = j
+            true
+        } else false
     } catch (e: Exception) { fail(e); false }
-
-    const val ENROLL_CLOSED_MSG = "Enrollment window closed. On the PC run: python -m turbo_hub totp"
 
     /**
      * Fetches the Authenticator key. The hub allows it once, only while its enrolment window is open (right after
@@ -209,7 +255,7 @@ object Graph {
             HubJson.totpEnroll(r.json())
         } else {
             if (r.status == 403) { totpEnrollPending.value = false; prefs.totpEnrollPending = false }
-            status.value = if (r.status == 403) ENROLL_CLOSED_MSG else app.getString(R.string.st_error_code, r.status)
+            status.value = if (r.status == 403) app.getString(R.string.st_enroll_closed) else app.getString(R.string.st_error_code, r.status)
             null
         }
     } catch (e: Exception) { fail(e); null }
@@ -244,15 +290,21 @@ object Graph {
         val ev = Ev(seq, j.getString("type"), j)
         events.update { (it + ev).takeLast(400) }
         when (ev.type) {
-            "task_started" -> { taskRunning.value = true; taskUsage.value = null }
+            "task_started" -> { taskRunning.value = true; paused.value = false; taskUsage.value = null }
             "usage" -> taskUsage.value = Usage.from(j.optJSONObject("usage"))
             // one branch only: Kotlin `when` stops at the first match, a second "task_finished" branch never ran
             "task_finished" -> {
                 taskRunning.value = false
+                paused.value = false
+                inputLocked.value = false
+                indicator.value = "idle"
                 j.optJSONObject("usage")?.let { u -> Usage.from(u).let { if (it.input + it.output > 0) taskUsage.value = it } }
                 j.optJSONObject("session_usage")?.let { sessionUsage.value = Usage.from(it) }
                 j.optJSONObject("day_usage")?.let { dayUsage.value = Usage.from(it) }
-                refreshTasks()
+                val finalSummary = events.value.lastOrNull { it.type == "final" && it.json.optString("task_id") == j.optString("task_id") }
+                    ?.json?.optString("text")
+                Notifier.showTaskFinished(app, word(app, j.optString("status")), finalSummary)
+                scope.launch { refreshTasks() }
             }
             "approval_request" -> {
                 val a = Approval(j.getString("approval_id"), j.optString("tool"), j.optString("window"),
@@ -263,11 +315,11 @@ object Graph {
                 Notifier.showApproval(app, a)
             }
             "approval_resolved" -> { val id = j.getString("approval_id"); pending.update { it.filter { x -> x.id != id } }; Notifier.cancelApproval(app, id) }
-            "stopped" -> stopped.value = true
+            "stopped" -> { stopped.value = true; taskRunning.value = false; paused.value = false; inputLocked.value = false; indicator.value = "idle" }
             "resumed" -> { stopped.value = false; paused.value = false }
             "input_lock" -> inputLocked.value = j.optBoolean("locked")
             "indicator" -> indicator.value = j.optString("state", "idle")
-            "taken_over" -> { paused.value = true; inputLocked.value = false }
+            "taken_over" -> { paused.value = true; inputLocked.value = false; if (indicator.value == "input_locked") indicator.value = "idle" }
             "hub_alert" -> Notifier.showAlert(app, ev.line(app))
         }
     }
@@ -278,7 +330,7 @@ object Graph {
         when (r.status) {
             200 -> { status.value = app.getString(R.string.st_task_sent); true }
             423 -> { status.value = r.json().optString("message").ifBlank { app.getString(R.string.st_stopped_hint) }; false }
-            409 -> { status.value = app.getString(R.string.st_task_running); false }
+            409 -> { status.value = app.getString(R.string.st_task_running); taskRunning.value = true; false }
             else -> { status.value = app.getString(R.string.st_error_code, r.status); false }
         }
     } catch (e: Exception) { fail(e); false }
@@ -291,17 +343,97 @@ object Graph {
         r.status == 200
     } catch (e: Exception) { fail(e); false }
 
-    suspend fun stop() { try { client.call("POST", "/stop", JSONObject()); stopped.value = true } catch (e: Exception) { fail(e) } }
+    suspend fun stop() { try { client.call("POST", "/stop", JSONObject()); stopped.value = true; taskRunning.value = false; paused.value = false; inputLocked.value = false; indicator.value = "idle" } catch (e: Exception) { fail(e) } }
     /** "Lấy lại quyền": releases the PC input lock and pauses the run until [resume]. */
-    suspend fun takeOver() { try { client.call("POST", "/takeover", JSONObject()); paused.value = true; inputLocked.value = false } catch (e: Exception) { fail(e) } }
-    suspend fun resume() { try { client.call("POST", "/resume", JSONObject()); stopped.value = false } catch (e: Exception) { fail(e) } }
+    suspend fun takeOver() { try { client.call("POST", "/takeover", JSONObject()); paused.value = true; inputLocked.value = false; if (indicator.value == "input_locked") indicator.value = "idle" } catch (e: Exception) { fail(e) } }
+    suspend fun resume() { try { client.call("POST", "/resume", JSONObject()); stopped.value = false; paused.value = false } catch (e: Exception) { fail(e) } }
 
     suspend fun refreshTasks() {
         try {
-            val r = client.call("GET", "/tasks"); if (r.status == 200) tasks.value = JSONArray(r.body).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+            val r = client.call("GET", "/tasks")
+            if (r.status == 200) {
+                online.value = true
+                via.value = prefs.activePath
+                tasks.value = JSONArray(r.body).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+            }
             val s = client.call("GET", "/status")
-            if (s.status == 200) { policy.value = s.json().optJSONObject("policy"); val u = s.json().optJSONObject("usage"); sessionUsage.value = Usage.from(u?.optJSONObject("session")); dayUsage.value = Usage.from(u?.optJSONObject("today")) }
+            if (s.status == 200) {
+                val sj = s.json()
+                online.value = true
+                via.value = prefs.activePath
+                stopped.value = sj.optBoolean("stopped", stopped.value)
+                paused.value = sj.optBoolean("paused", paused.value)
+                val runningId = sj.optString("running").takeIf { it.isNotBlank() && it != "null" }
+                taskRunning.value = runningId != null
+                sj.optJSONObject("inputLock")?.let { inputLocked.value = it.optBoolean("locked", false) }
+                sj.optString("indicator").takeIf { it.isNotBlank() && it != "null" }?.let { indicator.value = it }
+                sj.optJSONObject("policy")?.let { policy.value = it }
+                applyHubMeta(sj)
+                val u = sj.optJSONObject("usage")
+                sessionUsage.value = Usage.from(u?.optJSONObject("session"))
+                dayUsage.value = Usage.from(u?.optJSONObject("today"))
+            }
         } catch (e: Exception) { fail(e) }
+    }
+
+    suspend fun fetchScreenFrame(): Int = try {
+        val r = client.callBytes("/screen.jpg?w=960&q=60")
+        when (r.status) {
+            200 -> {
+                online.value = true
+                via.value = prefs.activePath
+                if (r.bytes.isNotEmpty()) {
+                    screenFrame.value = r.bytes
+                    screenFrameAtMs.value = System.currentTimeMillis()
+                    screenRedacted.value = r.redacted
+                }
+            }
+            403 -> screenViewEnabled.value = false
+            401 -> {
+                prefs.sessionId = ""
+                sessionId.value = ""
+                sessionExp.value = 0
+                status.value = app.getString(R.string.st_session_expired)
+            }
+            429 -> Unit
+        }
+        r.status
+    } catch (e: HubError) {
+        when (e.kind) {
+            ErrKind.ACCESS_LOGIN -> {
+                needAccessLogin.value = true
+                status.value = app.getString(R.string.st_access_login)
+                302
+            }
+            ErrKind.BAD_SIGNATURE, ErrKind.UNSIGNED -> {
+                fail(e)
+                -1
+            }
+            else -> 0
+        }
+    } catch (_: Exception) {
+        0
+    }
+
+    suspend fun refreshReport(days: Int) {
+        val validDays = if (days in setOf(1, 7, 30)) days else 7
+        reportLoading.value = true
+        reportError.value = false
+        try {
+            val r = client.call("GET", "/report?days=$validDays")
+            if (r.status == 200) {
+                online.value = true
+                via.value = prefs.activePath
+                report.value = HubJson.report(validDays, r.json())
+            } else {
+                reportError.value = true
+            }
+        } catch (e: Exception) {
+            if (e is HubError && e.kind == ErrKind.ACCESS_LOGIN) needAccessLogin.value = true
+            reportError.value = true
+        } finally {
+            reportLoading.value = false
+        }
     }
 
     suspend fun refreshAudit() {
