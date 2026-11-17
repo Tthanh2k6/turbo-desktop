@@ -26,6 +26,17 @@ android {
     kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
     buildFeatures { compose = true; buildConfig = true }
     testOptions { unitTests.isReturnDefaultValues = true }
+    buildTypes {
+        // Perf: R8 + resource shrinking. The debug APK is ~108 MB (all Material icons, unoptimised Compose);
+        // release is what owners should install. Signed with the debug key until a release keystore exists.
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
+            ndk { abiFilters += listOf("arm64-v8a") }   // phones only; the emulator uses the debug build
+        }
+    }
 }
 
 dependencies {
