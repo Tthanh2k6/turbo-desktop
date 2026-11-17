@@ -60,3 +60,10 @@ Real-input field runs (Sonnet through `claude -p`):
 | Real typing with UniKey running | 5 | ~120 | 22 s | pass |
 
 The Save As dialog is the largest result (about 1,500 tokens) because a common file dialog exposes a full folder tree; `query=` or `maxChars` would cut it. The end-to-end run with edge screenshots and the three suite repeats are not measured (see FIELD_REPORT.md).
+
+## G. Update 17/11 late
+
+- `claude -p` (haiku) real-input end to end, 5 steps typed into the editor fixture: 28.9 s wall, glow and banner shown during, gone within 5 s after.
+- Explorer: create a folder and rename it (task 4, the successful run): 17 tool calls, about 2,290 tokens of tool results, 38 s. The failed first attempts cost 12 calls for nothing; the cause was the key syntax and the missing window-level typing (findings 17 and 18).
+- STOP during a real-input batch: 4 calls, about 145 tokens, 19 s.
+- The input lock itself: lock on to off for one `press_keys` took 0.14 to 0.3 s in the audit log.

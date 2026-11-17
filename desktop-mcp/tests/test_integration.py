@@ -187,3 +187,29 @@ def test_normalize_keys_accepts_double_braces():
     assert normalize_keys("{{Esc}}") == ("{Esc}", True)
     assert normalize_keys("{Ctrl}s") == ("{Ctrl}s", False)
     assert normalize_keys("abc") == ("abc", False)
+
+
+def test_batch_step_with_unknown_field_is_a_clear_error(launch_app, desktop):
+    """Field round 5: a model invented a "real": true field and got a raw TypeError 'internal' result."""
+    d = launch_app("turbo_fixture.exe")
+    r = desktop.batch([{"action": "click", "name": "Count 0", "real": True}], window=d["id"])
+    assert r["ok"] is False and "bad step arguments" in r["steps"][0]["error"] and "Valid fields" in r["steps"][0]["error"]
+
+
+@pytest.mark.parametrize("given,expected", [
+    ("Ctrl+Shift+N", "{Ctrl}{Shift}n"), ("ctrl+s", "{Ctrl}s"), ("Alt+F4", "{Alt}{F4}"), ("Shift+F10", "{Shift}{F10}"),
+    ("Control+Enter", "{Ctrl}{Enter}"), ("Enter", "{Enter}"), ("esc", "{Esc}"), ("F2", "{F2}"), ("{Ctrl}s", "{Ctrl}s"),
+    ("hello world", "hello world"), ("turbo-new", "turbo-new"), ("a+b", "a+b"),
+])
+def test_normalize_keys_models_syntax(given, expected):
+    from turbo_desktop.engine import normalize_keys
+    assert normalize_keys(given)[0] == expected
+
+
+def test_send_text_without_target_types_into_the_window(launch_app, desktop):
+    """Field round 5 (task 4): an inline rename box is not an addressable control; send_text with only a window must work."""
+    if REAL_INPUT:
+        pytest.skip("real input enabled")
+    d = launch_app("turbo_fixture.exe")
+    with pytest.raises(ToolError, match="real input disabled"):     # reaches the input stage instead of 'need ref or name'
+        desktop.act(d["id"], "send_text", text="turbo-new")

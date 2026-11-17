@@ -164,12 +164,22 @@ LWA_ALPHA = 2
 T_MAX, T_END, T_LINGER = 1, 2, 3
 
 
+WM_ACQUIRE = WM_APP + 2
+HWND_MESSAGE = wintypes.HWND(-3)
+
+
 class InputLock:
-    """One lock object per process. acquire()/release() are idempotent; hold() is a nesting-safe context manager."""
+    """One lock object per process, served by ONE persistent thread (hooks, banner and timers all live on it).
+    acquire()/release() are idempotent; hold() is a nesting-safe context manager.
+
+    Field bug 16: an earlier version started a new thread per acquire. A second acquire inside the 2.5 s end-notice
+    of the first freed the first thread's callbacks while its window was still alive: the process crashed ("Connection
+    closed"). One thread for the life of the process removes the overlap."""
 
     def __init__(self, banner_class=BANNER_CLASS, linger_ms=2500):
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
+        self._thread_up = threading.Event()
         self._ready = threading.Event()
         self._done = threading.Event()
         self._done.set()
@@ -178,6 +188,7 @@ class InputLock:
         self.stopped = False
         self.reason = ""
         self.banner_hwnd = 0
+        self.ctrl_hwnd = 0
         self.policy = Policy()
         self.max_seconds = 60.0
         self.whole_task = False
@@ -188,7 +199,7 @@ class InputLock:
         self._text = BANNER_TEXT
         self._depth = 0
         self._hooks: list = []
-        self._procs: list = []  # keep ctypes callbacks alive
+        self._procs: list = []  # ctypes callbacks live as long as the lock object
         atexit.register(self.release, "exit")
 
     # ------------------------------------------------------------ public API
@@ -207,8 +218,14 @@ class InputLock:
             self._text = BANNER_TEXT
             self._ready.clear()
             self._done.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True, name="inputlock")
-            self._thread.start()
+            if self._thread is None or not self._thread.is_alive():
+                self._thread_up.clear()
+                self._thread = threading.Thread(target=self._run, daemon=True, name="inputlock")
+                self._thread.start()
+        if not self._thread_up.wait(5):
+            self._depth = max(0, self._depth - 1)
+            raise RuntimeError("input lock thread did not start")
+        u32.PostMessageW(self.ctrl_hwnd, WM_ACQUIRE, 0, 0)
         if not self._ready.wait(5) or not self.locked:
             self._depth = max(0, self._depth - 1)
             raise RuntimeError("could not install the input hooks")
@@ -217,12 +234,11 @@ class InputLock:
     def release(self, reason="done") -> dict:
         with self._cv:
             self._depth = 0
-        if self.locked and self.banner_hwnd:
+        if self.locked and self.ctrl_hwnd:
             self.reason = self.reason or reason
-            u32.PostMessageW(self.banner_hwnd, WM_RELEASE, 0, 0)
-        t = self._thread
-        if t and t is not threading.current_thread():
-            self._done.wait(4)  # hooks removed; the end notice may linger a little longer on its own
+            u32.PostMessageW(self.ctrl_hwnd, WM_RELEASE, 0, 0)
+            if self._thread is not threading.current_thread():
+                self._done.wait(4)  # hooks removed; the end notice may linger a little longer on its own
         return self.info()
 
     def end_one(self) -> dict:
@@ -250,7 +266,7 @@ class InputLock:
         finally:
             self.end_one()
 
-    # ------------------------------------------------------------ hook thread
+    # ------------------------------------------------------------ the one thread
 
     def _escape(self, action):
         if action == "stop":
@@ -265,26 +281,65 @@ class InputLock:
             self.reason = "owner-esc-x3"
         self._begin_release()
 
+    def _destroy_banner(self):
+        if self.banner_hwnd:
+            u32.KillTimer(self.ctrl_hwnd, T_END)
+            u32.DestroyWindow(self.banner_hwnd)
+            self.banner_hwnd = 0
+
     def _begin_release(self):
-        """Runs on the hook thread: unhook, show the end notice, schedule destruction."""
+        """On the thread: unhook, show the end notice, schedule its destruction."""
         if not self.locked:
             return
         self.locked = False
         for h in self._hooks:
             u32.UnhookWindowsHookEx(h)
         self._hooks = []
-        u32.KillTimer(self.banner_hwnd, T_MAX)
-        u32.KillTimer(self.banner_hwnd, T_LINGER)
+        u32.KillTimer(self.ctrl_hwnd, T_MAX)
+        u32.KillTimer(self.ctrl_hwnd, T_LINGER)
         self._text = END_TEXT
-        u32.InvalidateRect(self.banner_hwnd, None, True)
-        u32.SetTimer(self.banner_hwnd, T_END, self.linger_ms, None)
+        if self.banner_hwnd:
+            u32.InvalidateRect(self.banner_hwnd, None, True)
+            u32.SetTimer(self.ctrl_hwnd, T_END, self.linger_ms, None)
         self._done.set()
+
+    def _do_acquire(self, hinst):
+        """On the thread: banner window (replacing any lingering end notice), hooks, timers."""
+        self._destroy_banner()
+        sw = u32.GetSystemMetrics(0)
+        width = min(1000, sw)
+        hwnd = u32.CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                                   self.banner_class, "turbo-desktop", WS_POPUP, (sw - width) // 2, 0, width, 38,
+                                   None, None, hinst, None)
+        if not hwnd:
+            self._ready.set()
+            self._done.set()
+            return
+        self.banner_hwnd = hwnd
+        u32.SetLayeredWindowAttributes(hwnd, 0, 235, LWA_ALPHA)
+        u32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
+        u32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)  # topmost, no move/size/activate
+        h1 = u32.SetWindowsHookExW(13, self._kb_p, hinst, 0)
+        h2 = u32.SetWindowsHookExW(14, self._ms_p, hinst, 0)
+        self._hooks = [h for h in (h1, h2) if h]
+        if len(self._hooks) < 2:  # without both hooks there is no lock; never pretend
+            for h in self._hooks:
+                u32.UnhookWindowsHookEx(h)
+            self._hooks = []
+            self._destroy_banner()
+            self._ready.set()
+            self._done.set()
+            return
+        self.locked = True
+        u32.SetTimer(self.ctrl_hwnd, T_MAX, int(self.max_seconds * 1000), None)
+        u32.SetTimer(self.ctrl_hwnd, T_LINGER, 1000, None)
+        self._ready.set()
 
     def _run(self):
         hinst = k32.GetModuleHandleW(None)
 
         def wndproc(hwnd, msg, wp, lp):
-            if msg == WM_PAINT:
+            if msg == WM_PAINT and hwnd == self.banner_hwnd:
                 ps = PAINTSTRUCT()
                 hdc = u32.BeginPaint(hwnd, ctypes.byref(ps))
                 rc = wintypes.RECT()
@@ -301,45 +356,25 @@ class InputLock:
                 g32.DeleteObject(font)
                 u32.EndPaint(hwnd, ctypes.byref(ps))
                 return 0
-            if msg == WM_RELEASE:
-                self._begin_release()
-                return 0
-            if msg == WM_TIMER:
-                if wp == T_MAX:
-                    self.reason = self.reason or "max-seconds"
+            if hwnd == self.ctrl_hwnd:
+                if msg == WM_ACQUIRE:
+                    self._do_acquire(hinst)
+                    return 0
+                if msg == WM_RELEASE:
                     self._begin_release()
-                elif wp == T_LINGER:
-                    if self.whole_task and time.monotonic() - self.last_touch > self.linger and self._depth == 0:
-                        self.reason = self.reason or "idle-linger"
+                    return 0
+                if msg == WM_TIMER:
+                    if wp == T_MAX:
+                        self.reason = self.reason or "max-seconds"
                         self._begin_release()
-                elif wp == T_END:
-                    u32.KillTimer(hwnd, T_END)
-                    u32.DestroyWindow(hwnd)
-                return 0
-            if msg == WM_DESTROY:
-                u32.PostQuitMessage(0)
-                return 0
+                    elif wp == T_LINGER:
+                        if self.whole_task and time.monotonic() - self.last_touch > self.linger and self._depth == 0:
+                            self.reason = self.reason or "idle-linger"
+                            self._begin_release()
+                    elif wp == T_END:
+                        self._destroy_banner()
+                    return 0
             return u32.DefWindowProcW(hwnd, msg, wp, lp)
-
-        wp_ref = WNDPROC(wndproc)
-        wc = WNDCLASSW()
-        wc.lpfnWndProc = wp_ref
-        wc.hInstance = hinst
-        wc.lpszClassName = self.banner_class
-        u32.RegisterClassW(ctypes.byref(wc))  # re-registering after a previous run is harmless (fails with 1410)
-        sw = u32.GetSystemMetrics(0)
-        width = min(1000, sw)
-        hwnd = u32.CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                                   self.banner_class, "turbo-desktop", WS_POPUP, (sw - width) // 2, 0, width, 38,
-                                   None, None, hinst, None)
-        if not hwnd:
-            self._ready.set()
-            self._done.set()
-            return
-        self.banner_hwnd = hwnd
-        u32.SetLayeredWindowAttributes(hwnd, 0, 235, LWA_ALPHA)
-        u32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
-        u32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)  # topmost, no move/size/activate
 
         def kb(nCode, wParam, lParam):
             if nCode >= 0 and self.locked:
@@ -359,28 +394,17 @@ class InputLock:
                     return 1
             return u32.CallNextHookEx(None, nCode, wParam, lParam)
 
-        kb_p, ms_p = HOOKPROC(kb), HOOKPROC(ms)
-        self._procs = [wp_ref, kb_p, ms_p]
-        h1 = u32.SetWindowsHookExW(13, kb_p, hinst, 0)
-        h2 = u32.SetWindowsHookExW(14, ms_p, hinst, 0)
-        self._hooks = [h for h in (h1, h2) if h]
-        if len(self._hooks) < 2:  # without both hooks there is no lock; never pretend
-            for h in self._hooks:
-                u32.UnhookWindowsHookEx(h)
-            self._hooks = []
-            u32.DestroyWindow(hwnd)
-            self._ready.set()
-            self._done.set()
-            return
-        self.locked = True
-        u32.SetTimer(hwnd, T_MAX, int(self.max_seconds * 1000), None)
-        u32.SetTimer(hwnd, T_LINGER, 1000, None)
-        self._ready.set()
+        self._wp = WNDPROC(wndproc)
+        self._kb_p, self._ms_p = HOOKPROC(kb), HOOKPROC(ms)
+        self._procs = [self._wp, self._kb_p, self._ms_p]   # referenced for the whole life of the object
+        wc = WNDCLASSW()
+        wc.lpfnWndProc = self._wp
+        wc.hInstance = hinst
+        wc.lpszClassName = self.banner_class
+        u32.RegisterClassW(ctypes.byref(wc))
+        self.ctrl_hwnd = u32.CreateWindowExW(0, self.banner_class, "turbo-desktop-ctrl", 0, 0, 0, 0, 0, HWND_MESSAGE, None, hinst, None)
+        self._thread_up.set()
         msg = wintypes.MSG()
         while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             u32.TranslateMessage(ctypes.byref(msg))
             u32.DispatchMessageW(ctypes.byref(msg))
-        self.banner_hwnd = 0
-        self.locked = False
-        self._done.set()
-        u32.UnregisterClassW(self.banner_class, hinst)

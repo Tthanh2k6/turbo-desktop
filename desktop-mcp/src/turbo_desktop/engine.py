@@ -40,10 +40,36 @@ def no_activate_startupinfo():
     return si
 
 
+_NAMED_KEYS = {"enter": "Enter", "return": "Enter", "esc": "Esc", "escape": "Esc", "tab": "Tab", "delete": "Delete", "del": "Delete",
+               "backspace": "Backspace", "home": "Home", "end": "End", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+               "apps": "Apps", "menu": "Apps", "pageup": "PageUp", "pagedown": "PageDown", "space": "Space", "insert": "Insert"}
+
+
 def normalize_keys(keys: str) -> tuple[str, bool]:
-    """Agents often write {{Esc}} (template escaping) for {Esc}. Accept it and say so."""
-    new = re.sub(r"\{\{(\w+)\}\}", r"{\1}", keys or "")
-    return new, new != (keys or "")
+    """Accept what models write and turn it into uiautomation SendKeys syntax:
+    {{Esc}} -> {Esc};  Ctrl+Shift+N -> {Ctrl}{Shift}n;  Enter -> {Enter};  F2 -> {F2}.  Plain text is left alone."""
+    k = keys or ""
+    new = re.sub(r"\{\{(\w+)\}\}", lambda m: "{" + m.group(1) + "}", k)
+    m = re.fullmatch(r"((?:ctrl|control|alt|shift|win)\+)+(\S+)", new.strip(), re.I)
+    if m and "{" not in new:
+        parts = new.strip().split("+")
+        mods = "".join("{" + {"control": "Ctrl"}.get(p.lower(), p.capitalize()) + "}" for p in parts[:-1])
+        last = parts[-1]
+        low = last.lower()
+        if low in _NAMED_KEYS:
+            last = "{" + _NAMED_KEYS[low] + "}"
+        elif re.fullmatch(r"f\d{1,2}", low):
+            last = "{" + last.upper() + "}"
+        else:
+            last = last.lower() if len(last) == 1 else last
+        new = mods + last
+    elif "{" not in new:
+        low = new.strip().lower()
+        if low in _NAMED_KEYS:
+            new = "{" + _NAMED_KEYS[low] + "}"
+        elif re.fullmatch(r"f\d{1,2}", low):
+            new = "{" + new.strip().upper() + "}"
+    return new, new != k
 
 
 class ToolError(Exception):
@@ -589,8 +615,8 @@ class Desktop:
         self._ind_activity()
         self._note = {}
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
-        self._guard_window(d, action, uia=not (action == "press_keys" and not ref and not name))
-        if action == "press_keys" and not ref and not name:   # keys for the window itself (shortcuts like Ctrl+S)
+        self._guard_window(d, action, uia=not (action in ("press_keys", "send_text") and not ref and not name))
+        if action in ("press_keys", "send_text") and not ref and not name:   # keys / text for the window itself (Ctrl+S, inline rename boxes)
             w, c, ocr = self._win(d["hwnd"]), None, None
         else:
             w, c, ocr = self.resolve(d, ref, name, role)
@@ -622,7 +648,11 @@ class Desktop:
             raise
         except Exception as e:
             self.audit.write(event="action", ok=False, error=f"{type(e).__name__}: {e}", approval_id=approval, **base)
-            raise ToolError(f"{type(e).__name__}: {_clip(str(e), 120)}")
+            hint = ""
+            if type(e).__name__ == "COMError":
+                hint = (" (the element or the app refused the UI Automation call; for text inputs that are not real edit "
+                        "controls, such as an Explorer inline rename box, use action send_text, which types with the keyboard)")
+            raise ToolError(f"{type(e).__name__}: {_clip(str(e), 120)}{hint}")
         res = {"ok": True, "via": via, **extra, **self._note}
         if approval:
             res["approvalId"] = approval
@@ -842,12 +872,13 @@ class Desktop:
         return {}
 
     def _type_real(self, d, c, s, replace):
-        vp = c.GetPattern(P.ValuePattern)
+        vp = c.GetPattern(P.ValuePattern) if c is not None else None
         before = (vp.Value or "") if vp else None
 
         def go():
             self._front_or_fail(d)
-            c.SetFocus()
+            if c is not None:
+                c.SetFocus()
             if replace:
                 auto.SendKeys("{Ctrl}a", waitTime=0)
             auto.SendKeys(s.replace("{", "{{}").replace("}", "{}}"), waitTime=0.01)
@@ -924,7 +955,11 @@ class Desktop:
             st.setdefault("window", window)
             try:
                 if op == "act":
-                    r = self.act(**st)
+                    try:
+                        r = self.act(**st)
+                    except TypeError as e:   # e.g. an invented field such as "real": say what is valid
+                        raise ToolError(f"bad step arguments: {e}. Valid fields: window, ref, name, role, action, text, "
+                                        f"value, keys, direction, amount (plus op)")
                     results.append({"i": i, **{k: v for k, v in r.items() if k != "after"}})
                 elif op == "wait_for":
                     results.append({"i": i, **self.wait_for(**st)})

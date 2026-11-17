@@ -202,3 +202,21 @@ def test_hard_kill_takes_hooks_banner_and_glow_with_it():
     finally:
         if p.poll() is None:
             p.kill()
+
+
+@needs_idle
+def test_rapid_reacquire_inside_the_end_notice_does_not_crash():
+    """Field bug 16: a second acquire inside the 2.5 s end notice of the first crashed the whole server
+    (callbacks of the first lock thread were freed while its window was alive). Run in a subprocess to see a crash."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    src = str(Path(il.__file__).resolve().parents[1])
+    code = (
+        "import sys,time; sys.path.insert(0, r'%s'); from turbo_desktop import inputlock as il; "
+        "l = il.InputLock(banner_class='TurboDesktopBannerRapid', linger_ms=2500); "
+        "[ (l.acquire(10), time.sleep(0.15), l.end_one(), time.sleep(0.25)) for _ in range(8) ]; "
+        "time.sleep(3.5); print('ok', l.locked, l.banner_hwnd, flush=True)" % src)
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, (r.returncode, r.stderr[-300:])
+    assert r.stdout.strip() == "ok False 0"

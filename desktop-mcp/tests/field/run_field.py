@@ -140,8 +140,19 @@ def run(tid):
            "--verbose", "--model", "sonnet", "--max-turns", "30", "--permission-mode", "bypassPermissions",
            "--disallowedTools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,Agent,NotebookEdit,PowerShell"]
     t0 = time.time()
-    if tid in ("30", "30L"):  # emergency stop while the batch runs
+    if tid == "30":  # emergency stop while the batch runs
         threading.Timer(14, lambda: (Path(state) / "STOP").write_text("field")).start()
+    if tid == "30L":  # STOP 2.5 s after the first real-input lock appears in the audit log (not on a wall-clock guess)
+        def _stop_after_lock():
+            audit = Path(state) / "audit.jsonl"
+            end = time.time() + 120
+            while time.time() < end:
+                if audit.exists() and '"input_lock"' in audit.read_text(encoding="utf-8", errors="ignore"):
+                    time.sleep(2.5)
+                    (Path(state) / "STOP").write_text("field")
+                    return
+                time.sleep(0.3)
+        threading.Thread(target=_stop_after_lock, daemon=True).start()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=420, stdin=subprocess.DEVNULL)
     wall = time.time() - t0
     calls, result_chars, final, usage, errors = [], 0, "", {}, []
