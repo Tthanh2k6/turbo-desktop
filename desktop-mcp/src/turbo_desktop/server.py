@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 
@@ -23,13 +24,13 @@ _queue: "queue.Queue" = queue.Queue()
 _worker: threading.Thread | None = None
 
 
-def _worker_loop():
+def _worker_loop(q):
     """All UI Automation (COM) work runs on ONE dedicated thread with COM initialised. MCP tool calls arrive on
     other threads, where uiautomation fails with an opaque COM error (found in the first field run)."""
     import uiautomation as auto
     with auto.UIAutomationInitializerInThread(debug=False):
         while True:
-            fn, box, done = _queue.get()
+            fn, box, done = q.get()
             try:
                 box["r"] = fn()
             except BaseException as e:  # noqa: BLE001 - reported to the caller, never swallowed
@@ -48,14 +49,26 @@ def _j(o) -> str:
     return json.dumps(o, ensure_ascii=False, separators=(",", ":"))
 
 
+def _abandon_worker():
+    global _worker, _queue
+    _queue = queue.Queue()   # the old thread keeps its own queue reference... and stays blocked in its call
+    _worker = None
+
+
 def _on_worker(fn):
     global _worker
     if _worker is None:
-        _worker = threading.Thread(target=_worker_loop, daemon=True, name="uia")
+        _worker = threading.Thread(target=_worker_loop, args=(_queue,), daemon=True, name="uia")
         _worker.start()
     box, done = {}, threading.Event()
     _queue.put((fn, box, done))
-    done.wait()
+    limit = float(os.environ.get("TURBO_DESKTOP_CALL_TIMEOUT", "40"))
+    if not done.wait(limit):
+        # A UIA call into a hung app cannot be cancelled. Abandon this worker thread and start a fresh one so the
+        # next calls are not stuck behind it.
+        _abandon_worker()
+        raise ToolError(f"UI Automation call timed out after {limit:.0f}s (the target app is probably not responding "
+                        f"or is inside a modal dialog)", hung=True)
     if "e" in box:
         raise box["e"]
     return box["r"]

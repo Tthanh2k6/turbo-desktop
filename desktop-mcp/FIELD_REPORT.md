@@ -59,3 +59,24 @@ New failures:
 Also from the owner's list this round: shared lock respected (the hub agent held it for long stretches; my runs waited), the field runner now refuses prompts that start a session-restore app, and the tool results for real input carry `owner_took_over` and `stopped`.
 
 Counts after this round: **14 tasks run, 12 pass, 2 fail (21, 21k)**, 7 more `skipped-busy`, 1 not testable (26).
+
+## Third round (17/11 afternoon): the Save As investigation, and what could not run
+
+The owner left the PC (idle reached 700 s), but the machine-wide lock `%TEMP%\turbo-desktop-test.lock` was held for more than 17 minutes by pid 31232, which is the main session's long-lived `turbo-browser-mcp` node server, not a short task. A lock owned by a process that never exits cannot go stale, so I waited and did not break it (taking it would have let my focus changes land in the middle of the Chrome post it protects). That blocked every step that needs the screen: the remaining real-input field tasks, the `claude -p` end-to-end with edge screenshots, and the three stress runs. Their scripts are ready and have not been run: `tests/field/run_field.py 20 cv 18 30L 4 22` and `tests/field/e2e_glow.py` (writes edge strips to `field-shots/`).
+
+What I did finish (all outside the lock, no real input, and the orphan `turbo_editor.exe` I found was mine and was closed):
+
+- **Leftovers from the killed processes:** none. No glow window, no banner window and no hook outlived the killed `dlg.py` processes (checked with EnumWindows; the hooks are per process and Windows removes them with it). Documented in the inputlock docstring, and `test_hard_kill_takes_hooks_banner_and_glow_with_it` covers it (live test, skipped unless the owner is away; not yet run).
+- **Item 10 (Save As dialog missing, COM errors): cause found.** Two causes:
+  1. My editor fixture had no `[STAThread]` on `Main`, so `SaveFileDialog` never opened and the app hung in its handler. With the fixture fixed, the dialog appears and is listed by `windows_list` ("Save As"). That part was a fixture bug, not a tool bug.
+  2. A real limit that the fixed fixture exposed: while an `Invoke` is pending (its handler opened a modal dialog), every UIA call into that app blocks until the dialog closes, including `ControlFromHandle` on the dialog itself. Fix: after a pending Invoke the app is marked blocked; `inspect`/`act`/`wait_for` on any window of that process now fail at once with `blocked: true` and the reason. `window_control close` (a window message, not UIA) and window-level `press_keys` still work, so the dialog can be closed. The MCP server also puts a timeout (`TURBO_DESKTOP_CALL_TIMEOUT`, 40 s) on every UIA call, abandons the stuck worker thread and starts a new one (`hung: true`), so one hung app can no longer freeze the whole server. Regression tests: `tests/test_modal.py`. The first run of these (17 passed, 1 failed on `window_control` being blocked too) led to the `uia=False` exemption; the corrected tests were queued behind the lock and have not completed.
+- Fixtures now carry `[STAThread]`; rebuild with `tests/fixtures/build.ps1`.
+
+## Final counts (honest)
+
+Field tasks against FIELD_TASKS.md 1 to 30:
+
+- **Run: 14. Passed: 12. Failed: 2** (21 via menu Invoke: a real UIA limit, now reported instead of hanging; 21k via Ctrl+S: failed only because of the fixture's missing STAThread, expected to pass now, not rerun).
+- **Not run because the machine lock was held by the main session:** 20, OCR click (cv), 18, 30 with the lock (30L), 4, 22, 6.
+- **Not run for other reasons:** 26 (one monitor, 100% DPI); 1, 2, 3, 6 (as written), 7, 9 to 16, 23, 24 (as written) because they would need Notepad without a clean launch, the owner's open Settings window, apps not installed, or an elevated prompt.
+- **Automated tests:** last full run before the third round: 116 passed, 2 skipped. New tests since then (`test_modal.py`, hard-kill) are not part of a completed run. The three consecutive full runs the stress check asks for were not done. No flaky test was observed in the three full runs I did complete earlier (each 84 to 116 passed), but that is not the requested stress check.

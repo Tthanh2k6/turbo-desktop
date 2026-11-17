@@ -9,7 +9,7 @@ class KeyBlocker : IMessageFilter {
 }
 
 class Fixture : Form {
-  static void Main(string[] args) { if (Array.IndexOf(args, "--accept-keys") < 0) Application.AddMessageFilter(new KeyBlocker());  Application.EnableVisualStyles(); Application.Run(new Fixture()); }
+  [STAThread] static void Main(string[] args) { if (Array.IndexOf(args, "--accept-keys") < 0) Application.AddMessageFilter(new KeyBlocker());  Application.EnableVisualStyles(); Application.Run(new Fixture()); }
   protected override bool ShowWithoutActivation { get { return true; } }
   public Fixture() {
     Text = "TurboFixture"; Width = 460; Height = 420; StartPosition = FormStartPosition.Manual; Location = new Point(60, 60); ShowInTaskbar = true;

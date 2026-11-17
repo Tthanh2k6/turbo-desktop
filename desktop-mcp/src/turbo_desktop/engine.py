@@ -89,6 +89,7 @@ class Desktop:
         self.idle_fn = idle_fn or winsys.idle_seconds
         self.sleep = sleep_fn
         self._own_input_at = 0.0
+        self._pending_invokes: dict = {}
         self.lock = InputLock()
         self.indicator = border_mod.Indicator(disabled_by_env=os.environ.get("TURBO_DESKTOP_NO_INDICATOR") == "1")
 
@@ -136,10 +137,20 @@ class Desktop:
             raise ToolError(f"no window matches '{spec_s}'")
         return m[0]
 
-    def _guard_window(self, d: dict, action: str):
+    def _guard_window(self, d: dict, action: str, uia: bool = True):
         if sec.stop_requested():
             self.indicator.hide_now()
             raise ToolError("emergency stop active: all actions blocked until resumed from the phone", stopped=True)
+        t = self._pending_invokes.get(d.get("pid")) if uia and action != "close" else None
+        if t is not None:
+            if t.is_alive():
+                # field bug 10: while an Invoke is still pending (its handler opened a modal dialog), every UIA call into
+                # that app blocks until the dialog closes. Say so at once instead of hanging.
+                raise ToolError("this app is inside a modal dialog opened by a pending Invoke; UI Automation calls to it "
+                                "block until it closes. Find the dialog with windows_list and close it "
+                                "(window_control close, or press_keys {Esc} on the dialog); use the keyboard accelerator "
+                                "instead of Invoke for menu items that open dialogs.", blocked=True)
+            self._pending_invokes.pop(d.get("pid"), None)
         if d.get("denied"):
             self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, reason=d["denied"])
             raise ToolError(d["denied"], denied=True)
@@ -556,7 +567,7 @@ class Desktop:
             direction=None, amount=1):
         self._ind_activity()
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
-        self._guard_window(d, action)
+        self._guard_window(d, action, uia=not (action == "press_keys" and not ref and not name))
         if action == "press_keys" and not ref and not name:   # keys for the window itself (shortcuts like Ctrl+S)
             w, c, ocr = self._win(d["hwnd"]), None, None
         else:
@@ -793,7 +804,9 @@ class Desktop:
         t.start()
         t.join(wait)
         if t.is_alive():
-            return {"pending": True, "warn": "Invoke has not returned after %.1fs: a modal dialog is probably open; use windows_list / wait_for" % wait}
+            self._pending_invokes[d["pid"]] = t
+            return {"pending": True, "warn": "Invoke has not returned after %.1fs: a modal dialog is probably open. UIA calls to "
+                                             "this app are blocked until it closes; use windows_list, then close the dialog" % wait}
         if box.get("err") and box["err"] != "COMError":
             raise ToolError(f"invoke failed: {box['err']}")
         if box.get("err") == "COMError":

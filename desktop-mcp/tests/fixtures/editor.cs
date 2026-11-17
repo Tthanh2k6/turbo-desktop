@@ -12,7 +12,7 @@ class KeyBlocker : IMessageFilter {
 class Editor : Form {
   TextBox box;
   protected override bool ShowWithoutActivation { get { return true; } }
-  static void Main(string[] args) { if (Array.IndexOf(args, "--accept-keys") < 0) Application.AddMessageFilter(new KeyBlocker());  Application.EnableVisualStyles(); Application.Run(new Editor()); }
+  [STAThread] static void Main(string[] args) { if (Array.IndexOf(args, "--accept-keys") < 0) Application.AddMessageFilter(new KeyBlocker());  Application.EnableVisualStyles(); Application.Run(new Editor()); }
   public Editor() {
     Text = "TurboEditor - Untitled"; Width = 600; Height = 400;
     StartPosition = FormStartPosition.Manual; Location = new Point(80, 80);

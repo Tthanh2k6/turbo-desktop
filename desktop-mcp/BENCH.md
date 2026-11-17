@@ -41,3 +41,9 @@ Against that, desktop-mcp returned about 700 (Calculator) and 400 (form) tokens 
 ## D. Not measured
 
 Tasks that could not be run safely or at all on this PC are listed in `FIELD_REPORT.md` (Notepad restores the owner's open tabs, Settings would navigate the owner's open window, no Office/WordPad/Edge InPrivate/UAC trigger without touching the owner's session, real-input tasks skipped because the owner was active).
+
+## E. Update 17/11 afternoon
+
+- Explorer window with 200 files (field task 5): 4 tool calls, about 2,300 tokens of tool results, 16 s, correct. The listing is long because the list is not virtualised in Explorer's UIA tree; `query=` or `maxChars` cuts it. This is the largest single result measured.
+- Real-input steps now add the lock (hook install about 20 ms) and the glow; not measured end to end because the end-to-end run (`tests/field/e2e_glow.py`) could not take the machine lock.
+- The numbers in sections A to C did not change.

@@ -8,6 +8,8 @@ Hard floor (code, not configurable, not switchable off in rules):
   - A maximum lock time per acquire (default 60 s, clamped to 5..300): auto release.
   - Always released on exit / in `finally`. A banner is shown for as long as the lock is held.
   - Ctrl+Alt+Del cannot be blocked by any user-mode program (Windows guarantees it).
+  - A hard kill of the process removes the hooks and every window with it (they belong to the process); see
+    test_hard_kill_takes_hooks_banner_and_glow_with_it.
 """
 from __future__ import annotations
 

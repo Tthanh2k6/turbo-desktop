@@ -172,3 +172,33 @@ def test_real_input_reports_owner_took_over(monkeypatch):
         d.real_input(lambda: d.lock._escape("takeover"))
     assert e.value.extra["owner_took_over"] is True
     assert not d.lock.locked
+
+
+@needs_idle
+def test_hard_kill_takes_hooks_banner_and_glow_with_it():
+    """A killed process leaves no hook and no window behind (Windows removes both with the process)."""
+    import subprocess
+    import sys
+    code = (
+        "import sys,time; sys.path.insert(0, r'%s'); "
+        "from turbo_desktop import inputlock as il, border as bd; "
+        "l = il.InputLock(banner_class='TurboDesktopBannerKill'); l.acquire(30); "
+        "s = bd.GlowState(); s.set_locked(True); g = bd.Glow(s, window_class='TurboDesktopGlowKill'); g.start(); "
+        "print('up', flush=True); time.sleep(60)" % str((__import__('pathlib').Path(il.__file__).resolve().parents[1]))
+    )
+    p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == "up"
+        time.sleep(0.8)
+        assert banner_visible("TurboDesktopBannerKill")[0]
+        p.kill()
+        p.wait(5)
+        time.sleep(0.8)
+        assert not banner_visible("TurboDesktopBannerKill")[0]
+        h = ctypes.windll.user32.FindWindowW("TurboDesktopGlowKill", None)
+        assert not h
+        # input flows again: an injected+physical-agnostic probe, our own hook is gone so SendInput F24 works untouched
+        send_f24()
+    finally:
+        if p.poll() is None:
+            p.kill()
