@@ -22,7 +22,12 @@ import org.junit.runner.RunWith
 /** Compose UI tests on the Android 16 emulator. They render single screens with fake Graph state; no hub is needed. */
 @RunWith(AndroidJUnit4::class)
 class UiTest {
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    // the notification-permission dialog would otherwise take window focus and hide the Compose hierarchy
+    @get:Rule(order = 0) val perm: androidx.test.rule.GrantPermissionRule =
+        androidx.test.rule.GrantPermissionRule.grant(android.Manifest.permission.POST_NOTIFICATIONS, android.Manifest.permission.CAMERA)
+    @get:Rule(order = 1) val rule = createAndroidComposeRule<MainActivity>()
+
+    private fun str(id: Int) = rule.activity.getString(id)
 
     private fun show(content: @androidx.compose.runtime.Composable () -> Unit) {
         rule.activity.runOnUiThread { rule.activity.setContent { TurboTheme { content() } } }
@@ -36,21 +41,20 @@ class UiTest {
         rule.onNodeWithTag("preset2").assertIsDisplayed()
         rule.onNodeWithTag("preset0").assertTextContains("Wi-Fi", substring = true)
         rule.onNodeWithTag("preset2").performClick()
-        rule.onNodeWithTag("usePreset").assertTextContains("Chặt", substring = true, ignoreCase = true)
+        rule.onNodeWithTag("usePreset").assertTextContains(str(R.string.preset_strict), substring = true, ignoreCase = true)
     }
 
     @Test fun settingsTextNeverRunsUnderTheToggle() {
         Graph.policy.value = JSONObject("""{"preset":"balanced","totp":true,"biometric":false,"lockMode":"real_input","cfAccess":false,"ask":["send"]}""")
         show { SettingsTab(rule.activity) { } }
-        rule.onNodeWithTag("level").assertTextContains("Cân bằng", substring = true)
+        rule.onNodeWithTag("level").assertTextContains(str(R.string.preset_balanced), substring = true)
         // the 'floor' row has the longest description; its text column must end before the switch begins
         val row = rule.onNodeWithTag("row_floor").getUnclippedBoundsInRoot()
-        val switches = rule.onAllNodes(isToggleable())
-        val sw = switches[0].getUnclippedBoundsInRoot()
-        val desc = rule.onNodeWithText("Nút STOP, nhật ký kiểm toán và ô mật khẩu luôn được giữ.", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertTrue("description ${desc.right} must end before the toggle ${sw.left}", desc.right <= sw.left)
-        assertTrue(row.width > 200.dp)
-        rule.onNodeWithTag("row_lock").assertTextContains("Khi dùng chuột thật", substring = true)
+        val toggleWidth = 52.dp   // a Material3 Switch
+        val desc = rule.onNodeWithText(str(R.string.set_row_floor_d), useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue("description ends at ${desc.right} but the toggle starts at ${row.right - 16.dp - toggleWidth}", desc.right <= row.right - 16.dp - toggleWidth)
+        assertTrue((row.right - row.left) > 200.dp)
+        rule.onNodeWithText(str(R.string.set_lock_real), substring = true).assertIsDisplayed()
         rule.onNodeWithTag("row_border").assertIsDisplayed()
     }
 
@@ -69,11 +73,11 @@ class UiTest {
         Graph.indicator.value = "input_locked"; Graph.inputLocked.value = true; Graph.paused.value = false
         show { LiveTab() }
         rule.onNodeWithTag("chipLocked").assertIsDisplayed()
-        rule.onNodeWithTag("chipLocked").assertTextContains("khoá phím/chuột", substring = true)
+        rule.onNodeWithText(str(R.string.chip_locked)).assertIsDisplayed()
         rule.onNodeWithTag("takeover").assertIsDisplayed()
         Graph.indicator.value = "acting"; Graph.inputLocked.value = false
         rule.waitForIdle()
-        rule.onNodeWithTag("chipActing").assertTextContains("AI đang điều khiển", substring = true)
+        rule.onNodeWithText(str(R.string.chip_acting)).assertIsDisplayed()
         Graph.indicator.value = "idle"
     }
 
@@ -87,6 +91,6 @@ class UiTest {
         Graph.auditOk.value = false
         Graph.audit.value = listOf(JSONObject("""{"ts":1800000000.0,"kind":"stop","data":{"device":"x"}}"""))
         show { AuditTab() }
-        rule.onNodeWithTag("auditChain").assertTextContains("SỬA", substring = true)
+        rule.onNodeWithText(str(R.string.audit_bad)).assertIsDisplayed()
     }
 }

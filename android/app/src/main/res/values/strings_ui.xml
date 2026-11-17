@@ -53,6 +53,8 @@
     <string name="home_example">Ví dụ: mở Máy tính và tính 12,5 + 7</string>
     <string name="live_title">Đang chạy</string>
     <string name="live_idle">Chưa có việc đang chạy</string>
+    <string name="live_usage_none">—</string>
+    <string name="live_usage_cost">%1$d token vào · %2$d ra · $%3$s</string>
     <string name="live_this">Việc này</string>
     <string name="live_usage">%1$d token vào · %2$d ra</string>
     <string name="live_takeover_hint">Mở khoá phím/chuột ngay và tạm dừng việc đang chạy</string>

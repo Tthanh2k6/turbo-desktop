@@ -405,3 +405,47 @@ def test_input_lock_indicator_and_takeover_relay(tmp_path):
         assert res.get("blocked")
         d.request("POST", "/resume", {})
         assert not (state / "RELEASE").exists() and not hub.manager.paused
+
+
+def test_tool_result_summaries():
+    from turbo_hub.summaries import summarize
+    launch = json.dumps({"result": json.dumps({"ok": True, "windows": [{"id": "w3", "title": "Calculator"}]})})
+    assert summarize("mcp__desktop__launch_app", {}, launch) == "Opened Calculator (w3)"
+    act = json.dumps({"result": json.dumps({"ok": True, "via": "pattern"})})
+    assert summarize("mcp__desktop__act", {"action": "click", "name": "Equals"}, act) == "Clicked 'Equals' via UIA"
+    tree = json.dumps({"result": "window w3\n[w3:e1] <Button> \"1\"\n[w3:e2] <Button> \"2\"\n"})
+    assert summarize("mcp__desktop__inspect_compact", {}, tree) == "Read 2 controls"
+    err = json.dumps({"result": json.dumps({"ok": False, "error": "owner is using the PC"})})
+    assert summarize("mcp__desktop__act", {}, err).startswith("Failed: owner is using")
+    long_text = "word " * 100
+    out = summarize("some_other_tool", {}, long_text)
+    assert out.count("\n") <= 1 and len(out) <= 165 and out.endswith("…")
+    batch = json.dumps({"result": json.dumps({"ok": True, "steps": [{"ok": True}, {"ok": True}]})})
+    assert summarize("mcp__desktop__batch_actions", {}, batch) == "Ran 2 steps (2 ok)"
+
+
+def test_live_usage_is_deduplicated_and_indicator_is_derived(tmp_path):
+    script = [{"type": "tool_call", "tool": "mcp__desktop__inspect_compact", "input": {}, "window": "Calculator", "control": None, "action": "inspect"},
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 3}}},
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 5}}},   # same message again
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m2", "usage": {"input": 20, "output": 7}}},
+              {"type": "sleep", "s": 0.3}]
+    with Env(tmp_path, runner_script=script) as env:
+        env.hub.manager.engine = "desktop-mcp"
+        d = env.session_client()
+        d.request("POST", "/tasks", {"text": "x"})
+        ev = env.wait_event(d, lambda e: e["type"] == "task_finished")
+        usages = [e["usage"] for e in d.request("GET", "/events/poll?since=0").json() if e["type"] == "usage"]
+        assert usages[-1] == {"input": 30, "output": 12, "cache_read": 0, "cache_create": 0}   # not 10+10+20 / 3+5+7
+        states = [e["state"] for e in d.request("GET", "/events/poll?since=0").json() if e["type"] == "indicator"]
+        assert states == ["acting", "idle"]          # derived from the tool call, back to idle at the end
+
+
+def test_no_script_or_test_launches_the_owners_editor():
+    """Field rule: never launch or target windows the run did not open (the owner's editor windows hold real files)."""
+    word = "note" + "pad"
+    root = Path(__file__).resolve().parents[1]
+    for f in list((root / "scripts").glob("*.py")) + list((root / "tests").glob("*.py")):
+        for line in f.read_text("utf-8").splitlines():
+            if word in line.lower():
+                raise AssertionError(f"{f.name} mentions it: {line.strip()[:80]}")

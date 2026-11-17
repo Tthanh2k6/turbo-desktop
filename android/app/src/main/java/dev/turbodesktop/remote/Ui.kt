@@ -170,8 +170,9 @@ fun App(activity: FragmentActivity) = TurboTheme {
     var paired by remember { mutableStateOf(Graph.prefs.paired) }
     var onboarded by remember { mutableStateOf(Graph.prefs.onboarded) }
     val expSec by Graph.sessionExp.collectAsState()
+    val sid by Graph.sessionId.collectAsState()
     val tick by produceState(0L) { while (true) { value = System.currentTimeMillis() / 1000; delay(1000) } }
-    val sessionOpen = Graph.prefs.sessionId.isNotBlank() && expSec > tick
+    val sessionOpen = sid.isNotBlank() && expSec > tick
     when {
         !paired && !onboarded -> Welcome { onboarded = true; Graph.prefs.onboarded = true }
         !paired -> PairScreen(activity) { paired = true }
@@ -315,7 +316,9 @@ fun OpenSession(activity: FragmentActivity, onUnpair: () -> Unit) {
 @Composable
 fun Main(activity: FragmentActivity, nowSec: Long, expSec: Long, onUnpair: () -> Unit) {
     var tab by remember { mutableStateOf(Tab.TASKS) }
-    val indicator by Graph.indicator.collectAsState()
+    val rawIndicator by Graph.indicator.collectAsState()
+    val running by Graph.taskRunning.collectAsState()
+    val indicator = if (rawIndicator == "idle" && running) "acting" else rawIndicator   // a running task is never "ready"
     val stopped by Graph.stopped.collectAsState()
     val pulse by rememberInfiniteTransition(label = "glow").animateFloat(0.35f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
     val frame = when {
@@ -388,7 +391,7 @@ fun TasksTab(activity: FragmentActivity, nowSec: Long, expSec: Long) {
                     Text(stringResource(R.string.home_usage, day.input + day.output, "%.2f".format(day.cost)), color = Pal.TX2, fontSize = 13.sp)
                 }
                 Text(stringResource(R.string.sess_extend), color = Pal.MINT, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).selectable(false) {
-                    Graph.prefs.sessionId = ""; Graph.sessionExp.value = 0 }.padding(8.dp))
+                    Graph.prefs.sessionId = ""; Graph.sessionId.value = ""; Graph.sessionExp.value = 0 }.padding(8.dp))
             }
         }
         Text(stringResource(R.string.home_give), color = Pal.TX2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -416,11 +419,12 @@ fun LiveTab() {
     val ctx = LocalContext.current
     val events by Graph.events.collectAsState(); val indicator by Graph.indicator.collectAsState(); val paused by Graph.paused.collectAsState()
     val usage by Graph.sessionUsage.collectAsState(); val locked by Graph.inputLocked.collectAsState()
+    val taskRunning by Graph.taskRunning.collectAsState(); val taskUsage by Graph.taskUsage.collectAsState()
     val shown = events.filter { it.type in setOf("task_started", "text", "tool_call", "tool_result", "approval_request", "approval_resolved", "final", "task_finished", "warning", "hub_alert", "stopped", "input_lock", "taken_over") }.takeLast(60)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when {
             locked || indicator == "input_locked" -> Chip(stringResource(R.string.chip_locked), tag = "chipLocked")
-            indicator == "acting" -> Chip(stringResource(R.string.chip_acting), tag = "chipActing")
+            indicator == "acting" || taskRunning -> Chip(stringResource(R.string.chip_acting), tag = "chipActing")
             else -> Chip(stringResource(R.string.chip_idle), Pal.MINT, "chipIdle")
         }
         if (shown.isEmpty()) Text(stringResource(R.string.live_idle), color = Pal.TX2, fontSize = 14.sp)
@@ -434,7 +438,7 @@ fun LiveTab() {
         }
         TCard(fill = Pal.S1) { Column {
             Text(stringResource(R.string.live_this), color = Pal.TX3, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Text(stringResource(R.string.live_usage, usage.input, usage.output), color = Pal.TX, fontSize = 15.sp, modifier = Modifier.testTag("usage"))
+            Text(taskUsage?.let { u -> if (u.cost > 0) stringResource(R.string.live_usage_cost, u.input + u.cacheRead, u.output, "%.4f".format(u.cost)) else stringResource(R.string.live_usage, u.input + u.cacheRead, u.output) } ?: stringResource(R.string.live_usage_none), color = Pal.TX, fontSize = 15.sp, modifier = Modifier.testTag("usage"))
         } }
         if (paused) PrimaryButton(stringResource(R.string.live_resume), Modifier.testTag("resumePaused")) { Graph.scope.launch { Graph.resume() } }
         else {

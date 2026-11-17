@@ -34,6 +34,7 @@ class Task:
     finished_at: float | None = None
     token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     usage: dict = field(default_factory=lambda: _blank_usage())
+    live: dict = field(default_factory=dict)   # message id -> usage seen so far (deduplicated)
 
 
 class TaskManager:
@@ -48,6 +49,7 @@ class TaskManager:
         self._resume_evt = asyncio.Event()
         self._resume_evt.set()
         self.input_lock: dict = {"locked": False}
+        self.indicator_external = False   # True once desktop-mcp writes indicator.json: then it decides
         self.indicator = "idle"      # idle | acting | input_locked (from desktop-mcp via the bridge)
         self.audit = audit
         self.runner_factory = runner_factory
@@ -122,6 +124,11 @@ class TaskManager:
     async def _run(self, task: Task, runner: AgentRunner) -> None:
         async def emit(ev: dict) -> None:
             ev = {**ev, "task_id": task.id}
+            if ev["type"] == "usage_delta":
+                task.live[ev["mid"]] = ev["usage"]
+                total = {k: sum(u.get(k, 0) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
+                await self.emit({"type": "usage", "task_id": task.id, "usage": total})
+                return
             await self.emit(ev)
             if ev["type"] == "final" and ev.get("usage"):
                 self.record_usage(task, ev["usage"])
@@ -144,6 +151,8 @@ class TaskManager:
                 task.status = "stopped" if self.stopped else status
             task.finished_at = self.clock()
             self.audit.append("task_end", {"task": task.id, "status": task.status})
+            if not self.indicator_external and not self.input_lock.get("locked"):
+                await self.set_indicator("idle")
             await self.emit({"type": "task_finished", "task_id": task.id, "status": task.status,
                              "usage": task.usage, "session_usage": self.session_usage,
                              "day_usage": self.daily_usage.get(_today(self.clock()), _blank_usage())})
@@ -185,6 +194,8 @@ class TaskManager:
             return False
         await emit({"type": "tool_call", "tool": call.get("tool"), "window": call.get("window"),
                     "control": call.get("control"), "action": call.get("action")})
+        if not self.input_lock.get("locked") and not self.indicator_external:
+            await self.set_indicator("acting")      # derived from tool calls when desktop-mcp writes no indicator.json
         if self.engine == "desktop-mcp" and str(call.get("tool", "")).startswith("mcp__desktop"):
             needs = False   # desktop-mcp classifies with real control names and asks through the bridge itself
         else:

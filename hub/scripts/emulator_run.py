@@ -56,7 +56,7 @@ def conn_log(n=14):
 
 def enter_pin():
     """BiometricPrompt falls back to the device credential on an emulator without fingerprints."""
-    time.sleep(2.0)
+    time.sleep(4.0)
     adb("shell", "input", "text", PIN)
     adb("shell", "input", "keyevent", "66")
 
@@ -65,17 +65,18 @@ SHOTS = ROOT / "design" / "emulator"
 
 
 def shot(name):
-    SHOTS.mkdir(parents=True, exist_ok=True)
+    target = SHOTS / f"{name}.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
     time.sleep(1.2)
     r = subprocess.run([*ADB, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
-    (SHOTS / f"{name}.png").write_bytes(r.stdout)
+    target.write_bytes(r.stdout)
     F.log("screenshot", name, len(r.stdout))
 
 
 def restart_app():
     adb("shell", "am", "force-stop", PKG)
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1")
-    time.sleep(3)
+    time.sleep(12)
 
 
 def state():
@@ -120,7 +121,12 @@ def main():
         shot("02-pairing")
         hook("pair", text=text)
         enter_pin()          # pairing signs with the biometric-gated key as well (proof of possession)
-        F.log("PAIR ->", dbg_log(4))
+        for _ in range(15):
+            lines = dbg_log(2)
+            if any("pair=" in l for l in lines):
+                break
+        F.log("PAIR ->", lines)
+        F.log("hub.out tail:", Path(F.WORK / "hub.out").read_text(errors="replace")[-300:].replace(chr(10), " | "))
 
         restart_app()
         shot("03-open-session")
@@ -188,7 +194,7 @@ def main():
         F.log("after approval flow:", state())
 
         F.log("--- STOP from the phone during a task")
-        hook("task", text="Open Notepad and type the numbers 1 to 300, one per line. Use only the desktop tools.")
+        hook("task", text="Open Calculator and press the digit buttons 1 to 9 one at a time, reading the display after each press, and repeat the whole sequence five times. Use only the desktop tools.")
         time.sleep(12)
         hook("stop")
         F.log("STOP ->", dbg_log(3), "|", state())
@@ -212,6 +218,15 @@ def main():
         adb("shell", "svc", "wifi", "enable"); adb("shell", "svc", "data", "enable")
         time.sleep(15)
         F.log("ONLINE again:", state())
+
+        F.log("--- Vietnamese UI (per-app locale): the owner's default language")
+        adb("shell", "cmd", "locale", "set-app-locales", PKG, "--locales", "vi")
+        restart_app()
+        for tab, nm in (("TASKS", "04-tasks"), ("LIVE", "05-live"), ("APPROVALS", "06-approvals"), ("AUDIT", "08-audit"), ("SETTINGS", "07-settings")):
+            hook("tab", name=tab)
+            time.sleep(2)
+            shot("vi/" + nm)
+        adb("shell", "cmd", "locale", "set-app-locales", PKG, "--locales", "en-US")
     finally:
         hub.kill()
         F.close_new_windows(before)

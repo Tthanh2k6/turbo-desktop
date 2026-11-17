@@ -32,7 +32,7 @@ LOG = WORK / "field_run.log"
 import ctypes  # noqa: E402
 from ctypes import wintypes  # noqa: E402
 
-KILLABLE = {"calculatorapp.exe", "notepad.exe", "turbo_fixture.exe", "turbo_editor.exe", "turbo_canvas.exe"}
+KILLABLE = {"calculatorapp.exe", "turbo_fixture.exe", "turbo_editor.exe", "turbo_canvas.exe"}
 
 
 def top_windows() -> dict:
@@ -209,7 +209,7 @@ def scenario_deny(d: DevClient):
 
 def scenario_stop(d: DevClient):
     log("=== stop: press STOP while the agent works")
-    d.request("POST", "/tasks", {"text": "Open Notepad and type the numbers 1 to 300, one per line, then read the text back. "
+    d.request("POST", "/tasks", {"text": "Open Calculator and press the digit buttons 1 to 9 one at a time, reading the display after each press, and repeat the whole sequence five times. "
                                          "Use only the desktop tools."})
     t0, since = time.time(), 0
     while time.time() - t0 < 12:

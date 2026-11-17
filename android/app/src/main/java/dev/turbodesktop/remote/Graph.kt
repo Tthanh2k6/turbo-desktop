@@ -15,6 +15,9 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Tool results arrive as JSON-in-JSON; show a short readable form. */
+fun tidy(s: String): String = s.removePrefix("{\"result\":\"").replace("\\\"", "\"").replace("\\n", " ").replace(Regex("\\s+"), " ").trim().take(110)
+
 data class Ev(val seq: Long, val type: String, val json: JSONObject) {
     fun line(c: android.content.Context): String {
         fun opt(k: String) = json.optString(k).takeIf { it != "null" && it.isNotBlank() } ?: ""
@@ -22,7 +25,7 @@ data class Ev(val seq: Long, val type: String, val json: JSONObject) {
             "task_started" -> c.getString(R.string.ev_task_started, opt("text"))
             "text" -> opt("text")
             "tool_call" -> c.getString(R.string.ev_tool_call, opt("tool"), opt("control").let { if (it.isEmpty()) "" else "[$it]" })
-            "tool_result" -> c.getString(if (json.optBoolean("ok", true)) R.string.ev_tool_ok else R.string.ev_tool_err, opt("summary"))
+            "tool_result" -> c.getString(if (json.optBoolean("ok", true)) R.string.ev_tool_ok else R.string.ev_tool_err, tidy(opt("summary")))
             "approval_request" -> c.getString(R.string.ev_approval_request, opt("action"), opt("control"), opt("window"))
             "approval_resolved" -> c.getString(R.string.ev_approval_resolved, opt("decision"))
             "final" -> c.getString(R.string.ev_final, opt("text"))
@@ -67,6 +70,8 @@ object Graph {
     val stopped = MutableStateFlow(false)
     val inputLocked = MutableStateFlow(false)   // the PC keyboard/mouse is locked while the agent uses real input
     val paused = MutableStateFlow(false)
+    val taskUsage = MutableStateFlow<Usage?>(null)   // null = the agent reported no usage yet: show a dash, never a fake 0
+    val taskRunning = MutableStateFlow(false)   // a task_started without a task_finished yet
     val requestTab = MutableStateFlow<String?>(null)   // debug/adb hook: jump to a tab
     val policy = MutableStateFlow<JSONObject?>(null)   // what the hub says is in force (preset, totp, biometric, lock mode...)
     val indicator = MutableStateFlow("idle")    // idle | acting | input_locked: drives the orange frame and the status chip
@@ -74,6 +79,7 @@ object Graph {
     val via = MutableStateFlow("-")
     val status = MutableStateFlow("")            // transient message for the user
     val sessionExp = MutableStateFlow(0L)
+    val sessionId = MutableStateFlow("")      // observable copy of prefs.sessionId so the UI switches screens when it changes
     val sessionUsage = MutableStateFlow(Usage())
     val dayUsage = MutableStateFlow(Usage())
     val needAccessLogin = MutableStateFlow(false)
@@ -90,6 +96,7 @@ object Graph {
         client = HubClient(prefs, plain, auth)
         relay = RelayClient(prefs, plain)
         sessionExp.value = prefs.sessionExp
+        sessionId.value = prefs.sessionId
         Notifier.createChannels(app)
     }
 
@@ -118,7 +125,7 @@ object Graph {
     } catch (e: Exception) { fail(e); false }
 
     fun unpairLocal() {
-        conn?.cancel(); prefs.unpairLocal(); sessionExp.value = 0; online.value = false; events.value = emptyList()
+        conn?.cancel(); prefs.unpairLocal(); sessionId.value = ""; sessionExp.value = 0; online.value = false; events.value = emptyList()
         HubService.stop(app)
     }
 
@@ -128,7 +135,7 @@ object Graph {
         if (r.status == 200) {
             val j = r.json()
             prefs.sessionId = j.getString("sessionId"); prefs.sessionExp = j.getLong("expiresAt")
-            sessionExp.value = prefs.sessionExp; stopped.value = j.optBoolean("stopped")
+            sessionId.value = prefs.sessionId; sessionExp.value = prefs.sessionExp; stopped.value = j.optBoolean("stopped")
             status.value = app.getString(R.string.st_session_open)
             HubService.start(app); startConnection(); true
         } else { status.value = app.getString(R.string.st_session_fail, r.status); false }
@@ -145,7 +152,7 @@ object Graph {
                     backoff = 1000L
                 } catch (e: HubError) {
                     online.value = false
-                    if (e.status == 401) { prefs.sessionId = ""; sessionExp.value = 0; status.value = app.getString(R.string.st_session_expired); break }
+                    if (e.status == 401) { prefs.sessionId = ""; sessionId.value = ""; sessionExp.value = 0; status.value = app.getString(R.string.st_session_expired); break }
                     if (e.kind == ErrKind.BAD_SIGNATURE) { status.value = e.message ?: ""; delay(30_000) }
                     fail(e)
                     android.util.Log.w("TurboConn", "hub error: ${e.kind} ${e.message}")
@@ -164,6 +171,9 @@ object Graph {
         val ev = Ev(seq, j.getString("type"), j)
         events.update { (it + ev).takeLast(400) }
         when (ev.type) {
+            "task_started" -> { taskRunning.value = true; taskUsage.value = null }
+            "usage" -> taskUsage.value = Usage.from(j.optJSONObject("usage"))
+            "task_finished" -> { taskRunning.value = false; j.optJSONObject("usage")?.let { u -> Usage.from(u).let { if (it.input + it.output > 0) taskUsage.value = it } } }
             "approval_request" -> {
                 val a = Approval(j.getString("approval_id"), j.optString("tool"), j.optString("window"),
                     j.optString("control"), j.optString("action"),

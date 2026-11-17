@@ -3,11 +3,11 @@
     <string name="app_name">Turbo Remote</string>
     <string name="ev_task_started">Started: %1$s</string>
     <string name="ev_tool_call">Tool: %1$s %2$s</string>
-    <string name="ev_tool_ok">Done: %1$s</string>
+    <string name="ev_tool_ok">Result: %1$s</string>
     <string name="ev_tool_err">Error: %1$s</string>
     <string name="ev_approval_request">Waiting for approval: %1$s %2$s in %3$s</string>
     <string name="ev_approval_resolved">Decided: %1$s</string>
-    <string name="ev_final">Result: %1$s</string>
+    <string name="ev_final">Done: %1$s</string>
     <string name="ev_finished">Finished (%1$s)</string>
     <string name="ev_warning">Warning: %1$s</string>
     <string name="ev_alert">ALERT: %1$s</string>

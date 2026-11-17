@@ -53,6 +53,8 @@
     <string name="home_example">Example: open Calculator and compute 12.5 + 7</string>
     <string name="live_title">Running</string>
     <string name="live_idle">No task is running</string>
+    <string name="live_usage_none">—</string>
+    <string name="live_usage_cost">%1$d tokens in · %2$d out · $%3$s</string>
     <string name="live_this">This task</string>
     <string name="live_usage">%1$d tokens in · %2$d out</string>
     <string name="live_takeover_hint">Unlock keyboard/mouse now and pause the run</string>

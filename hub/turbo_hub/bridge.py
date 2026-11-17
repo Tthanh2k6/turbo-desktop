@@ -63,7 +63,7 @@ class DesktopBridge:
             st = json.loads((self.dir / "indicator.json").read_text("utf-8")).get("state", "idle")
             return st if st in ("idle", "acting", "input_locked") else "idle"
         except (OSError, ValueError):
-            return "idle"
+            return None   # no file: the hub derives acting/idle from tool calls
 
     def touch_alive(self) -> None:
         if self.clock() - self.activity() < self.alive_seconds:
@@ -100,7 +100,10 @@ class DesktopBridge:
             self.touch_alive()
             lock = self.read_lock()
             await self.m.set_input_lock(lock)
-            await self.m.set_indicator(self.read_indicator(lock))
+            ind = self.read_indicator(lock)
+            self.m.indicator_external = (self.dir / "indicator.json").exists()
+            if ind is not None:
+                await self.m.set_indicator(ind)
             for p in sorted((self.dir / "approvals").glob("*.req.json")):
                 if p.name not in self.handled:
                     self.handled.add(p.name)

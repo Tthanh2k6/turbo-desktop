@@ -61,9 +61,9 @@ def test_approval_rules_per_preset():
     assert not C.approval_required(bal, ev("Save")) and not C.approval_required(bal, ev("Sender name"))
     assert not C.approval_required(bal, ev("OK", window="Delete file"))             # confirm_dialog only in strict
     assert C.approval_required(strict, ev("OK", window="Delete file"))
-    assert not C.approval_required(strict, ev("OK", window="Notepad"))
+    assert not C.approval_required(strict, ev("OK", window="Calculator"))
     assert C.approval_required(strict, ev(action="press_keys", keys="Enter", window="Zalo - chat"))
-    assert not C.approval_required(strict, ev(action="press_keys", keys="Enter", window="Notepad"))
+    assert not C.approval_required(strict, ev(action="press_keys", keys="Enter", window="Calculator"))
     assert C.approval_required(strict, ev(process="Taskmgr"))
     assert not C.approval_required(strict, {"tool": "Read", "input": {}})            # not a desktop tool
     assert not C.approval_required(strict, ev("Delete", action="inspect"))           # reads never ask

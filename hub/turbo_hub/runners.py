@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
+from .summaries import summarize
+
 EmitFn = Callable[[dict], Awaitable[None]]
 GateFn = Callable[[dict], Awaitable[bool]]  # True = allowed (after any approval)
 
@@ -45,7 +47,7 @@ class FakeRunner:
         return [
             {"type": "text", "text": f"Plan: {text}"},
             {"type": "tool_call", "tool": "mcp__desktop__inspect_compact",
-             "input": {"window": "Notepad"}, "window": "Notepad", "control": None, "action": "inspect"},
+             "input": {"window": "Calculator"}, "window": "Calculator", "control": None, "action": "inspect"},
             {"type": "tool_call", "tool": "mcp__desktop__act",
              "input": {"action": "click", "name": "Send"}, "window": "Mail - Compose",
              "control": "Send", "action": "click", "crop_png_b64": TINY_PNG_B64},
@@ -65,6 +67,8 @@ class FakeRunner:
                     await asyncio.sleep(step["s"])
                 elif kind == "text":
                     await emit({"type": "text", "text": step["text"]})
+                elif kind == "raw":
+                    await emit(step["event"])
                 elif kind == "final":
                     await emit({"type": "final", "text": step["text"], "ok": True, "usage": step.get("usage")})
                 elif kind == "tool_call":
@@ -103,6 +107,12 @@ def map_stream_json(obj: dict) -> list[dict]:
     out: list[dict] = []
     t = obj.get("type")
     if t == "assistant":
+        msg = obj.get("message") or {}
+        mu = msg.get("usage")
+        if mu and msg.get("id"):
+            out.append({"type": "usage_delta", "mid": msg["id"], "usage": {
+                "input": int(mu.get("input_tokens", 0)), "output": int(mu.get("output_tokens", 0)),
+                "cache_read": int(mu.get("cache_read_input_tokens", 0)), "cache_create": int(mu.get("cache_creation_input_tokens", 0))}})
         for block in (obj.get("message") or {}).get("content", []) or []:
             if block.get("type") == "text" and block.get("text"):
                 out.append({"type": "text", "text": block["text"]})
@@ -116,7 +126,8 @@ def map_stream_json(obj: dict) -> list[dict]:
                 if isinstance(content, list):
                     content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
                 out.append({"type": "tool_result", "tool_use_id": block.get("tool_use_id"),
-                            "ok": not block.get("is_error", False), "summary": str(content or "")[:300]})
+                            "ok": not block.get("is_error", False), "summary": str(content or "")[:300],
+                            "full": str(content or "")[:30000]})
     elif t == "result":
         u = obj.get("usage") or {}
         usage = {"input": int(u.get("input_tokens", 0)), "output": int(u.get("output_tokens", 0)),
@@ -176,6 +187,7 @@ class ClaudeRunner:
         self.claude_path = claude_path or find_claude()
         self.spawn = spawn or _spawn_real
         self.proc = None
+        self._calls: dict = {}
         self.spawn_count = 0
 
     def write_mcp_config(self) -> str:
@@ -220,7 +232,12 @@ class ClaudeRunner:
                 continue
             for ev in map_stream_json(obj):
                 if ev["type"] == "tool_call_seen":
+                    self._calls[ev.get("tool_use_id")] = (ev.get("tool"), ev.get("input") or {})
                     continue   # the permission tool (gate) emits the one tool_call event; do not show it twice
+                if ev["type"] == "tool_result":
+                    tool, inp = self._calls.pop(ev.get("tool_use_id"), (None, {}))
+                    ev["tool"] = tool
+                    ev["summary"] = summarize(tool, inp, ev.pop("full", ev.get("summary", "")))
                 await emit(ev)
                 if ev["type"] == "final":
                     return "done" if ev.get("ok", True) else "failed"

@@ -4,11 +4,11 @@
     <string name="app_name">Turbo Remote</string>
     <string name="ev_task_started">Bắt đầu: %1$s</string>
     <string name="ev_tool_call">Công cụ: %1$s %2$s</string>
-    <string name="ev_tool_ok">Xong: %1$s</string>
+    <string name="ev_tool_ok">Kết quả: %1$s</string>
     <string name="ev_tool_err">Lỗi: %1$s</string>
     <string name="ev_approval_request">Chờ duyệt: %1$s %2$s trong %3$s</string>
     <string name="ev_approval_resolved">Đã quyết định: %1$s</string>
-    <string name="ev_final">Kết quả: %1$s</string>
+    <string name="ev_final">Xong: %1$s</string>
     <string name="ev_finished">Kết thúc (%1$s)</string>
     <string name="ev_warning">Cảnh báo: %1$s</string>
     <string name="ev_alert">CẢNH BÁO: %1$s</string>

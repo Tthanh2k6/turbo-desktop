@@ -30,7 +30,7 @@ TEXT = {
         "strict": "3) Chặt     - vân tay + mã Authenticator, hỏi mọi hành động nhạy cảm, Cloudflare Access bắt buộc nếu bật tunnel",
         "ask_phone": "Bạn sẽ ghép điện thoại qua cùng mạng Wi-Fi? [c/k]",
         "saved": "Đã lưu cài đặt vào",
-        "next": "Tiếp theo: chạy `python -m turbo_hub serve`, rồi `python -m turbo_hub run \"mở Notepad và gõ xin chào\"`.",
+        "next": "Tiếp theo: chạy `python -m turbo_hub serve`, rồi `python -m turbo_hub run \"mở Máy tính và tính 2 + 2\"`.",
         "approve": "Cần duyệt: {action} \"{control}\" trong \"{window}\". Cho phép? [c/k] ",
     },
     "en": {
@@ -40,7 +40,7 @@ TEXT = {
         "strict": "3) Strict   - fingerprint + Authenticator code, asks for every sensitive action, Cloudflare Access required if the tunnel is on",
         "ask_phone": "Will you pair a phone over the same Wi-Fi? [y/n]",
         "saved": "Saved settings to",
-        "next": "Next: run `python -m turbo_hub serve`, then `python -m turbo_hub run \"open Notepad and type hello\"`.",
+        "next": "Next: run `python -m turbo_hub serve`, then `python -m turbo_hub run \"open Calculator and compute 2 + 2\"`.",
         "approve": "Approval needed: {action} \"{control}\" in \"{window}\". Allow? [y/n] ",
     },
 }
