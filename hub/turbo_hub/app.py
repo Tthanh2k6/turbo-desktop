@@ -113,6 +113,7 @@ def create_app(settings: Settings) -> FastAPI:
     manager = TaskManager(audit, settings.runner_factory, approval_timeout=settings.approval_timeout,
                           clock=settings.clock, approval_required=settings.classifier, thumbs_dir=thumbs,
                           system_state=settings.system_state, usage_path=settings.data_dir / "usage.json",
+                          tasks_path=settings.data_dir / "tasks.jsonl",
                           engine=settings.approval_engine)
     st = State(settings, store, audit, manager)
     st.started = int(settings.clock())
@@ -678,6 +679,12 @@ def create_app(settings: Settings) -> FastAPI:
     async def get_audit(limit: int = 50, ctx: Ctx = Depends(in_session)):
         ok, msg = audit.verify()
         return reply(ctx, {"chainOk": ok, "chainInfo": msg, "entries": audit.read(max(1, min(limit, 200)))})
+
+    @app.get("/report")
+    async def get_report(days: str = "7", ctx: Ctx = Depends(in_session)):
+        if days not in ("1", "7", "30"):
+            return reply(ctx, {"detail": "days must be 1, 7, or 30"}, 400)
+        return reply(ctx, manager.report(int(days)))
 
     # ------------------------------------------------------------ claude permission-prompt bridge
     @app.post("/internal/approve")

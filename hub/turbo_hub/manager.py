@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime
 import hashlib
 import json
+from pathlib import Path
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -13,6 +16,8 @@ from typing import Callable
 from . import classifier as classifier_mod
 from .audit import AuditLog
 from .runners import AgentRunner, RunnerFactory
+
+TASK_RETENTION_DAYS = 90
 
 
 @dataclass
@@ -36,12 +41,13 @@ class Task:
     token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     usage: dict = field(default_factory=lambda: _blank_usage())
     live: dict = field(default_factory=dict)   # message id -> usage seen so far (deduplicated)
+    apps: list[str] = field(default_factory=list)
 
 
 class TaskManager:
     def __init__(self, audit: AuditLog, runner_factory: RunnerFactory, *, approval_timeout: float = 120.0,
                  clock: Callable[[], float], approval_required: Callable[[dict], bool] | None = None,
-                 thumbs_dir=None, system_state=None, usage_path=None,
+                 thumbs_dir=None, system_state=None, usage_path=None, tasks_path=None,
                  engine: str = "hub"):
         self.engine = engine
         self.on_stop = lambda stopped: None
@@ -62,6 +68,9 @@ class TaskManager:
         self.thumbs_dir = thumbs_dir
         self.system_state = system_state      # async () -> dict | None  (desktop-mcp system_state)
         self.usage_path = usage_path
+        self.tasks_path: Path | None = (
+            Path(tasks_path) if tasks_path else (Path(usage_path).with_name("tasks.jsonl") if usage_path else None)
+        )
         self.session_usage = _blank_usage()
         self.daily_usage: dict[str, dict] = {}
         if usage_path and usage_path.exists():
@@ -77,9 +86,12 @@ class TaskManager:
         self._runner: AgentRunner | None = None
         self._asyncio_task: asyncio.Task | None = None
         self._seq = 0
+        self._read_tasks_file()
 
     # ------------------------------------------------------------ events
     async def emit(self, ev: dict) -> dict:
+        ev = dict(ev)
+        ev.pop("_gated", None)
         self._seq += 1
         ev = {"seq": self._seq, "ts": round(self.clock(), 3), **ev}
         self.events.append(ev)
@@ -132,7 +144,12 @@ class TaskManager:
 
     async def _run(self, task: Task, runner: AgentRunner) -> None:
         async def emit(ev: dict) -> None:
+            ev = dict(ev)
+            gated = ev.pop("_gated", False)
             ev = {**ev, "task_id": task.id}
+            if not gated and ev["type"] == "tool_call":
+                if app := _extract_app(ev):
+                    task.apps.append(app)
             if ev["type"] == "usage_delta":
                 task.live[ev["mid"]] = ev["usage"]
                 total = {k: sum(u.get(k, 0) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
@@ -159,7 +176,12 @@ class TaskManager:
             if task.status == "running":
                 task.status = "stopped" if self.stopped else status
             task.finished_at = self.clock()
-            self.on_task_end(task)
+            self.on_task_end(task)   # release the PC lock first: the report record must never delay or block it
+            try:
+                self._record_finished_task(task)
+            except Exception as exc:  # noqa: BLE001  reporting is best effort
+                import sys
+                print(f"tasks.jsonl record failed: {exc!r}", file=sys.stderr)
             self.audit.append("task_end", {"task": task.id, "status": task.status})
             if not self.indicator_external and not self.input_lock.get("locked"):
                 await self.set_indicator("idle")
@@ -194,6 +216,118 @@ class TaskManager:
         if self.usage_path:
             self.usage_path.write_text(json.dumps(self.daily_usage), "utf-8")
 
+    def _read_tasks_file(self) -> list[dict]:
+        if not self.tasks_path or not self.tasks_path.exists():
+            return []
+        cutoff = self.clock() - TASK_RETENTION_DAYS * 86400
+        kept: list[dict] = []
+        dropped = False
+        for line in self.tasks_path.read_text("utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            ts = float(rec.get("end") or rec.get("start") or 0.0)
+            if ts >= cutoff:
+                kept.append(rec)
+            else:
+                dropped = True
+        if dropped:
+            self._write_tasks_file(kept)
+        return kept
+
+    def _write_tasks_file(self, records: list[dict]) -> None:
+        if not self.tasks_path:
+            return
+        self.tasks_path.parent.mkdir(parents=True, exist_ok=True)
+        content = "".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in records)
+        self.tasks_path.write_text(content, "utf-8")
+
+    def _record_finished_task(self, task: Task) -> None:
+        if not self.tasks_path:
+            return
+        records = self._read_tasks_file()
+        rec = {
+            "id": task.id,
+            "start": round(task.started_at, 3),
+            "end": round(task.finished_at if task.finished_at is not None else self.clock(), 3),
+            "status": task.status,
+            "usage": dict(task.usage),
+            "apps": list(task.apps),
+        }
+        records = [r for r in records if r.get("id") != task.id] + [rec]
+        cutoff = self.clock() - TASK_RETENTION_DAYS * 86400
+        records = [r for r in records if float(r.get("end") or r.get("start") or 0.0) >= cutoff]
+        self._write_tasks_file(records)
+
+    def report(self, days: int = 7) -> dict:
+        now = self.clock()
+        today_date = datetime.date.fromtimestamp(now)
+        day_dates = [(today_date - datetime.timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+        by_date = {d: {"date": d, "done": 0, "failed": 0, "stopped": 0, "seconds": 0} for d in day_dates}
+        file_records = self._read_tasks_file()
+        by_id: dict[str, dict] = {}
+        extra: list[dict] = []
+        for r in file_records:
+            rid = r.get("id")
+            if isinstance(rid, str) and rid:
+                by_id[rid] = r
+            else:
+                extra.append(r)
+        for t in self.tasks.values():
+            if t.status != "running" and t.finished_at is not None:
+                by_id[t.id] = {
+                    "id": t.id,
+                    "start": t.started_at,
+                    "end": t.finished_at,
+                    "status": t.status,
+                    "usage": t.usage,
+                    "apps": t.apps,
+                }
+        records = list(by_id.values()) + extra
+        tokens_in = 0
+        tokens_out = 0
+        cost_usd = 0.0
+        app_counts: dict[str, int] = {}
+        app_names: dict[str, str] = {}
+        for r in records:
+            start = float(r.get("start") or 0.0)
+            end = float(r.get("end") if r.get("end") is not None else start)
+            d = _today(start or end)
+            if d not in by_date:
+                continue
+            status = str(r.get("status") or "")
+            if status in ("done", "failed", "stopped"):
+                by_date[d][status] += 1
+            by_date[d]["seconds"] += int(round(max(0.0, end - start)))
+            u = r.get("usage") if isinstance(r.get("usage"), dict) else {}
+            tokens_in += int(u.get("input", u.get("tokensIn", 0)))
+            tokens_out += int(u.get("output", u.get("tokensOut", 0)))
+            cost_usd = round(cost_usd + float(u.get("cost_usd", u.get("costUsd", 0.0))), 6)
+            for raw_app in r.get("apps") or []:
+                if isinstance(raw_app, str) and (a := _clean_app_name(raw_app)):
+                    k = a.lower()
+                    app_counts[k] = app_counts.get(k, 0) + 1
+                    if k not in app_names or (app_names[k].islower() and not a.islower()):
+                        app_names[k] = a
+        days_list = [by_date[d] for d in day_dates]
+        totals = {
+            "done": sum(x["done"] for x in days_list),
+            "failed": sum(x["failed"] for x in days_list),
+            "stopped": sum(x["stopped"] for x in days_list),
+            "seconds": sum(x["seconds"] for x in days_list),
+            "tokensIn": tokens_in,
+            "tokensOut": tokens_out,
+            "costUsd": cost_usd,
+        }
+        top_apps = [
+            {"name": app_names[k], "count": c}
+            for k, c in sorted(app_counts.items(), key=lambda x: (-x[1], x[0]))[:5]
+        ]
+        return {"days": days_list, "totals": totals, "topApps": top_apps}
+
     # ------------------------------------------------------------ gate + approvals
     async def gate(self, task_id: str, call: dict, emit=None) -> bool:
         emit = emit or (lambda ev: self.emit({**ev, "task_id": task_id}))
@@ -202,8 +336,10 @@ class TaskManager:
         if self.stopped:
             self.audit.append("action_blocked", {"task": task_id, "tool": call.get("tool"), "why": "stopped"})
             return False
+        if (t := self.tasks.get(task_id)) and (app := _extract_app(call)):
+            t.apps.append(app)
         await emit({"type": "tool_call", "tool": call.get("tool"), "window": call.get("window"),
-                    "control": call.get("control"), "action": call.get("action")})
+                    "control": call.get("control"), "action": call.get("action"), "_gated": True})
         if not self.input_lock.get("locked") and not self.indicator_external:
             await self.set_indicator("acting")      # derived from tool calls when desktop-mcp writes no indicator.json
         if self.engine == "desktop-mcp" and str(call.get("tool", "")).startswith("mcp__desktop"):
@@ -339,6 +475,46 @@ def classifier_mod_safe(fn: Callable[[dict], bool], call: dict) -> bool:
         return bool(fn(call))
     except Exception:
         return True  # fail closed
+
+
+def _clean_app_name(raw: str) -> str:
+    s = raw.strip()
+    if not s:
+        return ""
+    if s.lower().startswith("process:"):
+        s = s[8:].strip()
+    if "\\" in s or "/" in s:
+        s = s.replace("/", "\\").rsplit("\\", 1)[-1].strip()
+    if s.lower().endswith(".exe"):
+        s = s[:-4].strip()
+    return s
+
+
+def _extract_app(call: dict) -> str | None:
+    tool = str(call.get("tool") or "")
+    short = tool.split("__")[-1]
+    if short not in ("launch_app", "act", "inspect_compact"):
+        return None
+    inp = call.get("input") if isinstance(call.get("input"), dict) else {}
+    for cand in (call.get("process"), call.get("app"), inp.get("process"), inp.get("app")):
+        if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
+            return cleaned
+    if short == "launch_app":
+        sum_args = (call.get("sum") or {}).get("a") if isinstance(call.get("sum"), dict) else None
+        sum_title = sum_args[0] if isinstance(sum_args, list) and sum_args else None
+        for cand in (inp.get("target"), inp.get("name"), call.get("target"), sum_title):
+            if isinstance(cand, str) and (cleaned := _clean_app_name(cand)):
+                return cleaned
+    win = call.get("window") if isinstance(call.get("window"), str) else inp.get("window")
+    if not isinstance(win, str) or not win.strip():
+        return None
+    w = win.strip()
+    if re.fullmatch(r"w\d+", w, re.I):
+        return None
+    if w.lower().startswith("process:"):
+        return _clean_app_name(w) or None
+    seg = w.rsplit(" - ", 1)[-1].strip()
+    return _clean_app_name(seg) or None
 
 
 def _takes_task(factory) -> bool:
