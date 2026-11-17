@@ -1894,10 +1894,12 @@ fun ApprovalsTab(activity: FragmentActivity) {
     val tasks by Graph.tasks.collectAsState()
     val stopped by Graph.stopped.collectAsState()
     val scope = rememberCoroutineScope()
-    val now by produceState(System.currentTimeMillis() / 1000.0) {
+    val now by produceState(System.currentTimeMillis() / 1000.0, pending.isNotEmpty()) {
+        value = System.currentTimeMillis() / 1000.0
+        if (pending.isEmpty()) return@produceState   // countdowns only matter while an approval is waiting
         while (true) {
-            value = System.currentTimeMillis() / 1000.0
             delay(1000L)
+            value = System.currentTimeMillis() / 1000.0
         }
     }
 

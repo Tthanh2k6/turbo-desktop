@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -151,11 +152,12 @@ fun Main(
         else -> rawIndicator
     }
 
-    val pulseAlpha = if (reducedMotion) {
-        1f
-    } else {
+    // Perf (measured on the owner's phone): an always-running infinite transition read during composition made the
+    // whole Main recompose and redraw every frame (~11 fps idle, ~64 fps while viewing the PC). Run it only while the
+    // AI is acting, and read the value inside the draw lambda so only the edge redraws.
+    val pulseState: State<Float>? = if (!reducedMotion && effectiveIndicator == "acting" && !stopped) {
         val transition = rememberInfiniteTransition(label = "edgeBreathe")
-        val a by transition.animateFloat(
+        transition.animateFloat(
             initialValue = 0.38f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -164,8 +166,7 @@ fun Main(
             ),
             label = "edgeAlpha",
         )
-        a
-    }
+    } else null
 
     val wantedTab by Graph.requestTab.collectAsState()
     LaunchedEffect(wantedTab) {
@@ -217,14 +218,14 @@ fun Main(
             val glowW = 14.dp.toPx()
             val crispW = 3.dp.toPx()
             drawRoundRect(
-                color = aiColor.copy(alpha = 0.22f * pulseAlpha),
+                color = aiColor.copy(alpha = 0.22f * (pulseState?.value ?: 1f)),
                 topLeft = Offset(glowW / 2f, glowW / 2f),
                 size = Size((size.width - glowW).coerceAtLeast(0f), (size.height - glowW).coerceAtLeast(0f)),
                 cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx()),
                 style = Stroke(width = glowW),
             )
             drawRect(
-                color = aiColor.copy(alpha = pulseAlpha),
+                color = aiColor.copy(alpha = pulseState?.value ?: 1f),
                 topLeft = Offset(crispW / 2f, crispW / 2f),
                 size = Size((size.width - crispW).coerceAtLeast(0f), (size.height - crispW).coerceAtLeast(0f)),
                 style = Stroke(width = crispW),
