@@ -100,12 +100,8 @@ def default_agent_command(mode: str, claude: str | None) -> list[str]:
 def write_user_config(path: Path, preset: str, phone: bool = False) -> None:
     """First-run wizard output: a short commented file; every key from defaults.toml can be added below."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    phone_block = ('
-# You said you will pair a phone: it reaches this PC over the same Wi-Fi (LAN).
-'
-                   '[server]
-connections = ["local", "lan"]
-') if phone else ""
+    phone_block = ("\n# You said you will pair a phone: it reaches this PC over the same Wi-Fi (LAN).\n"
+                   "[server]\nconnections = [\"local\", \"lan\"]\n") if phone else ""
     path.write_text(f'''# turbo-desktop.toml: your settings. Everything not listed here comes from the preset.
 # All available keys, with explanations: hub/turbo_hub/defaults.toml
 preset = "{preset}"      # easy | balanced | strict

@@ -34,6 +34,7 @@ class Prefs(ctx: Context) {
     var sessionExp: Long get() = sp.getLong("sessionExp", 0); set(v) = sp.edit().putLong("sessionExp", v).apply()
     var relayUrl: String get() = s("relayUrl"); set(v) = put("relayUrl", v.trim().trimEnd('/'))
     var relayPaired: Boolean get() = sp.getBoolean("relayPaired", false); set(v) = sp.edit().putBoolean("relayPaired", v).apply()
+    var preset: String get() = s("preset"); set(v) = put("preset", v)
     var onboarded: Boolean get() = sp.getBoolean("onboarded", false); set(v) = sp.edit().putBoolean("onboarded", v).apply()
     val paired get() = hubKey.isNotBlank() && deviceId.isNotBlank()
 

@@ -11,7 +11,7 @@ Cần: Windows 10/11, Python 3.12+, Claude Code đã đăng nhập (hoặc agent
 cd hub
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python -m turbo_hub setup        # chọn 1 = Thoáng (Enter)
+.venv\Scripts\python -m turbo_hub setup        # Enter = Thoáng; trả lời c nếu bạn sẽ ghép điện thoại (cùng Wi-Fi)
 .venv\Scripts\python -m turbo_hub serve        # để cửa sổ này chạy
 ```
 
@@ -21,6 +21,8 @@ Cửa sổ khác:
 .venv\Scripts\python -m turbo_hub run "mở Máy tính và tính (12,5 + 7) * 3"
 ```
 
+Nếu bạn trả lời có cho điện thoại, hub nghe thêm trên địa chỉ LAN của máy (không bao giờ 0.0.0.0) để điện thoại cùng Wi-Fi ghép được. Không ghép điện thoại thì hub chỉ nghe 127.0.0.1.
+
 Việc nhạy cảm (xoá vĩnh viễn, thanh toán, gỡ phần mềm, cài đặt bảo mật Windows) sẽ hỏi ngay trong cửa sổ này: gõ `c` để cho phép, phím khác để từ chối. Không cần điện thoại. Muốn dùng điện thoại thì xem "Ghép điện thoại".
 
 Dừng khẩn cấp: `python -m turbo_hub stop` (hoặc nút STOP trên điện thoại, hoặc phím nóng của desktop-mcp). Cho chạy lại: `python -m turbo_hub resume`.
@@ -29,7 +31,7 @@ Dừng khẩn cấp: `python -m turbo_hub stop` (hoặc nút STOP trên điện 
 
 | | Thoáng (mặc định) | Cân bằng | Chặt |
 |---|---|---|---|
-| Kết nối | chỉ máy này | + LAN, Tailscale | Tailscale, Cloudflare (có Access) |
+| Kết nối | máy này; thêm LAN nếu bạn ghép điện thoại | + LAN, Tailscale | Tailscale, Cloudflare (có Access) |
 | Phiên | 12 giờ | 2 giờ | 2 giờ |
 | Mã Google Authenticator | không | khi mở phiên | khi mở phiên |
 | Vân tay trên điện thoại | không | không | có (mở phiên + duyệt) |

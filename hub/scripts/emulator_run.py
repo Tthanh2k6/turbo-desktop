@@ -61,6 +61,23 @@ def enter_pin():
     adb("shell", "input", "keyevent", "66")
 
 
+SHOTS = ROOT / "design" / "emulator"
+
+
+def shot(name):
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    time.sleep(1.2)
+    r = subprocess.run([*ADB, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
+    (SHOTS / f"{name}.png").write_bytes(r.stdout)
+    F.log("screenshot", name, len(r.stdout))
+
+
+def restart_app():
+    adb("shell", "am", "force-stop", PKG)
+    adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1")
+    time.sleep(3)
+
+
 def state():
     hook("state")
     lines = dbg_log(2)
@@ -95,12 +112,22 @@ def main():
         info.pop("otpauth", None); info.pop("needs", None)
         info["url"] = "http://10.0.2.2:%d" % F.PORT
         text = "turbo-pair:" + base64.urlsafe_b64encode(json.dumps(info, separators=(",", ":")).encode()).decode()
+        adb("shell", "pm", "grant", PKG, "android.permission.CAMERA")
+        restart_app()
+        shot("01-welcome")
+        hook("onboard")
+        restart_app()
+        shot("02-pairing")
         hook("pair", text=text)
         enter_pin()          # pairing signs with the biometric-gated key as well (proof of possession)
         F.log("PAIR ->", dbg_log(4))
 
+        restart_app()
+        shot("03-open-session")
         hook("session", totp=totp.code_at(store.totp_secret, int(time.time() // 30)))
         enter_pin()
+        time.sleep(2)
+        shot("04-tasks")
         F.log("SESSION ->", dbg_log(4))
         F.log("STATE ->", state())
 
@@ -125,6 +152,9 @@ def main():
         hook("task", text="Open the Windows Calculator app and compute (12.5 + 7) * 3 using its buttons. "
                           "Tell me the number shown in the result display. Use only the desktop tools.")
         F.log("TASK ->", dbg_log(3))
+        hook("tab", name="LIVE")
+        time.sleep(6)
+        shot("05-live-acting")
         t0 = time.time()
         last = ""
         while time.time() - t0 < 120:
@@ -145,6 +175,8 @@ def main():
             s = state()
             if "pending=1" in s:
                 F.log("phone sees pending approval:", s)
+                hook("tab", name="APPROVALS")
+                shot("06-approval")
                 hook("decide", decision="deny")
                 enter_pin()
                 F.log("DECIDE deny ->", dbg_log(4))
@@ -160,8 +192,14 @@ def main():
         time.sleep(12)
         hook("stop")
         F.log("STOP ->", dbg_log(3), "|", state())
+        shot("09-stop-state")
         hook("resume")
         F.log("RESUME ->", dbg_log(3))
+        hook("tab", name="SETTINGS")
+        shot("07-settings")
+        hook("tab", name="AUDIT")
+        time.sleep(2)
+        shot("08-audit")
 
         F.log("--- network loss mid-task")
         hook("task", text="Open Calculator and press the digit buttons 1 to 9 one at a time. Use only the desktop tools.")

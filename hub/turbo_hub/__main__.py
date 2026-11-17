@@ -127,7 +127,11 @@ def build_settings(cfg: dict, dd: Path, runner_kind: str, public_url: str | None
         session_ttl=float(cfg["session"]["hours"]) * 3600, pair_code_ttl=float(cfg["auth"]["pairing_window_minutes"]) * 60,
         public_url=public_url or hub_local, internal_token=internal, system_state=mcp_system_state(mcp, agent_env(cfg, dd)),
         classifier=cfgmod.make_classifier(cfg), approval_engine=cfg["approval"].get("engine", "desktop-mcp"),
-        desktop_state_dir=dd / "desktop-state", totp_required=bool(cfg["auth"]["totp"]),
+        desktop_state_dir=dd / "desktop-state",
+        policy={"preset": cfg["preset"], "totp": bool(cfg["auth"]["totp"]), "biometric": bool(cfg["auth"]["biometric"]),
+                "sessionHours": cfg["session"]["hours"], "lockMode": cfg["input_lock"]["mode"],
+                "border": bool(cfg["indicator"]["border"]), "cfAccess": bool(cfg["cloudflare"]["require_access"]),
+                "ask": cfg["approval"]["enabled"]}, totp_required=bool(cfg["auth"]["totp"]),
         biometric_required=bool(cfg["auth"]["biometric"]), persist_sessions=bool(cfg["session"].get("persist", False)), connections=conns,
         require_access_header=bool(cfg["cloudflare"]["require_access"]))
 

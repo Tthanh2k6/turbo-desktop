@@ -3,7 +3,7 @@ package dev.turbodesktop.remote
 import android.Manifest
 import android.content.Intent
 import android.os.Bundle
-import android.widget.TextView
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -19,7 +19,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(TextView(this).apply { setText(R.string.placeholder_ui); setPadding(48, 96, 48, 48); textSize = 16f })
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        setContent { App(this) }
         askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
         handle(intent)
     }
@@ -50,6 +51,8 @@ class MainActivity : FragmentActivity() {
                 log("session=" + Graph.openSession(i.getStringExtra("totp") ?: "") + " " + Graph.status.value)
             "task" -> log("task=" + Graph.sendTask(i.getStringExtra("text") ?: "") + " " + Graph.status.value)
             "stop" -> { Graph.stop(); log("stopped=${Graph.stopped.value}") }
+            "onboard" -> Graph.prefs.onboarded = true
+            "tab" -> Graph.requestTab.value = i.getStringExtra("name")
             "takeover" -> { Graph.takeOver(); log("paused=${Graph.paused.value}") }
             "resume" -> { Graph.resume(); log("stopped=${Graph.stopped.value}") }
             "state" -> log("state online=${Graph.online.value} via=${Graph.via.value} stopped=${Graph.stopped.value} " +

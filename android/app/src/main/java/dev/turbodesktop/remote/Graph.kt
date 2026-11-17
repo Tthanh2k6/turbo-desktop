@@ -67,6 +67,8 @@ object Graph {
     val stopped = MutableStateFlow(false)
     val inputLocked = MutableStateFlow(false)   // the PC keyboard/mouse is locked while the agent uses real input
     val paused = MutableStateFlow(false)
+    val requestTab = MutableStateFlow<String?>(null)   // debug/adb hook: jump to a tab
+    val policy = MutableStateFlow<JSONObject?>(null)   // what the hub says is in force (preset, totp, biometric, lock mode...)
     val indicator = MutableStateFlow("idle")    // idle | acting | input_locked: drives the orange frame and the status chip
     val online = MutableStateFlow(false)
     val via = MutableStateFlow("-")
@@ -209,7 +211,7 @@ object Graph {
         try {
             val r = client.call("GET", "/tasks"); if (r.status == 200) tasks.value = JSONArray(r.body).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
             val s = client.call("GET", "/status")
-            if (s.status == 200) { val u = s.json().optJSONObject("usage"); sessionUsage.value = Usage.from(u?.optJSONObject("session")); dayUsage.value = Usage.from(u?.optJSONObject("today")) }
+            if (s.status == 200) { policy.value = s.json().optJSONObject("policy"); val u = s.json().optJSONObject("usage"); sessionUsage.value = Usage.from(u?.optJSONObject("session")); dayUsage.value = Usage.from(u?.optJSONObject("today")) }
         } catch (e: Exception) { fail(e) }
     }
 

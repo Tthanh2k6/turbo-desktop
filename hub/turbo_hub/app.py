@@ -45,6 +45,7 @@ class Settings:
     classifier: Callable[[dict], bool] | None = None
     totp_required: bool = True
     approval_engine: str = "hub"
+    policy: dict = field(default_factory=dict)   # shown read-only on the phone (Settings screen)
     urls: tuple = ()   # ((name, url), ...) in connection order, shown to the phone at pairing
     desktop_state_dir: Path | None = None
     persist_sessions: bool = False
@@ -439,7 +440,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def status(ctx: Ctx = Depends(in_session)):
         t = manager.running_task()
         return reply(ctx, {"stopped": manager.stopped, "running": t.id if t else None,
-                           "paused": manager.paused, "inputLock": manager.input_lock, "indicator": manager.indicator,
+                           "paused": manager.paused, "policy": settings.policy, "inputLock": manager.input_lock, "indicator": manager.indicator,
                            "usage": {"session": manager.session_usage,
                                      "today": manager.daily_usage.get(_today(now()), {})},
                            "pendingApprovals": len(manager.pending_approvals()), "now": int(now())})
