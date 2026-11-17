@@ -39,7 +39,7 @@ Dừng khẩn cấp: `python -m turbo_hub stop` (hoặc nút STOP trên điện 
 | Vùng cấm | ô mật khẩu | + trình quản lý mật khẩu, ngân hàng | + ứng dụng Windows Security |
 | Khoá phím/chuột (lệnh cục bộ `run`) | khi đang dùng chuột thật | khi đang dùng chuột thật | cả việc |
 | Khoá phím/chuột (việc từ điện thoại) | cả việc (tối đa 15 phút) | cả việc (tối đa 15 phút) | cả việc (tối đa 15 phút) |
-| Xem màn hình từ điện thoại (`/screen.jpg`) | bật (tối đa 2 fps) | bật (tối đa 2 fps) | tắt |
+| Xem màn hình từ điện thoại (`/screen.jpg`) | bật (tối đa 5 fps) | bật (tối đa 5 fps) | tắt |
 
 Chọn lại bất cứ lúc nào: `python -m turbo_hub setup`, hoặc sửa một mục trong `turbo-desktop.toml`. Mọi mục đều có thể bật/tắt riêng.
 
@@ -87,7 +87,7 @@ cloudflared tunnel run --url http://127.0.0.1:8750 turbo
 ```
 Trong `turbo-desktop.toml`: `[server] connections = ["tailscale","cloudflare"]` và `[cloudflare] url = "https://turbo.ten-mien-cua-ban.com"`.
 
-**Nên đặt Cloudflare Access** (Zero Trust, gói miễn phí) trước tên miền đó: đăng nhập bằng email một lần mã hoặc Google. Đây là lớp chặn thêm trước khi yêu cầu chạm tới hub. Mức Chặt đặt `require_access = true`: hub từ chối yêu cầu qua tunnel nếu không có dấu vết đã qua Access. Hạn chế hiện tại: app chưa có màn hình đăng nhập Access (dự kiến mở WebView lấy cookie `CF_Authorization`); khi bật Access hãy thêm một chính sách Bypass hoặc Service Token, hoặc chờ bản UI.
+**Nên đặt Cloudflare Access** (Zero Trust, gói miễn phí) trước tên miền đó: đăng nhập bằng email một lần mã hoặc Google. Đây là lớp chặn thêm trước khi yêu cầu chạm tới hub. Mức Chặt đặt `require_access = true`: hub từ chối yêu cầu qua tunnel nếu không có dấu vết đã qua Access. App có nút "Đăng nhập Cloudflare Access" trong Cài đặt: mở WebView trong app để lấy cookie `CF_Authorization`.
 
 Dù đi đường nào: mọi yêu cầu vẫn phải có chữ ký, dấu thời gian trong 60 giây, nonce chưa dùng; phản hồi và sự kiện của hub được ký nên app phát hiện endpoint giả. Sai 5 lần trong 10 phút từ một nguồn bị khoá 15 phút, hub ghi nhật ký và báo cho điện thoại. Nhớ rằng địa chỉ `http://` qua Internet không mã hoá nội dung: dùng https (Cloudflare) hoặc Tailscale.
 
@@ -119,11 +119,11 @@ Chế độ `oneshot` chạy một tiến trình mỗi việc và hiển thị t
 
 ## Hiển thị trên điện thoại
 
-Token và chi phí hiện theo việc, theo phiên và theo ngày (lấy từ kết quả của agent).
+Màn Việc không hiện token. Token, chi phí (tuỳ chọn) và ứng dụng hay dùng nằm ở tab Báo cáo (`GET /report`).
 
 - **Mỗi lúc một việc (`409 Conflict`):** Khi đang có việc chạy, `POST /tasks` trả về `409 {"detail":"busy","running":"<id>"}` để tránh hai việc dùng chung tiến trình agent.
 - **Khoá cả việc khi giao từ điện thoại (`[input_lock] remote_task = "whole_task"`, `max_task_minutes = 15`):** Từ lúc bắt đầu tới lúc xong việc từ điện thoại, hub ghi `task_active.json` (cập nhật nhịp tim mỗi 5 giây) để desktop-mcp khoá phím/chuột vật lý và giữ viền sáng suốt việc. Nhấn Esc ×3 trên PC (ghi `owner_took_over.json`) hoặc bấm **Lấy lại quyền** trên điện thoại sẽ mở khoá ngay và tạm dừng việc (chạy tiếp bằng Resume).
-- **Xem màn hình trực tiếp (`GET /screen.jpg`):** Trả về ảnh JPEG màn hình chính (ký như mọi phản hồi khác, giới hạn `[screen_view] max_fps = 2` mỗi thiết bị, tắt ở mức Chặt). Trước khi nén, hub tô đen mọi cửa sổ có tiêu đề khớp `[privacy] secret_title_patterns` (kèm header `X-Redacted`), ghi nhật ký tối đa 1 lần/phút mỗi thiết bị và ghi `screen_view.json` để PC hiện "Điện thoại đang xem màn hình".
+- **Xem màn hình trực tiếp (`GET /screen.jpg`):** Trả về ảnh JPEG màn hình chính (ký như mọi phản hồi khác, giới hạn `[screen_view] max_fps = 5` mỗi thiết bị, tắt ở mức Chặt; app cho chọn 0,5 đến 5 hình/giây và độ nét 960/1600/1920 px; khi phóng to, app xin `rx/ry/rw/rh` để nhận đúng phần đang xem với điểm ảnh gốc). Trước khi nén, hub tô đen mọi cửa sổ có tiêu đề khớp `[privacy] secret_title_patterns`, cửa sổ của trình quản lý mật khẩu và hộp duyệt của chủ máy (kèm header `X-Redacted`), ghi nhật ký tối đa 1 lần/phút mỗi thiết bị và ghi `screen_view.json` để PC hiện "Điện thoại đang xem màn hình".
 
 Trên điện thoại Xiaomi/HyperOS, app chạy dịch vụ nền với thông báo cố định và hướng dẫn tắt tối ưu pin, bật tự khởi động; app không dùng FCM.
 

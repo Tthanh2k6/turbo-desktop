@@ -189,7 +189,7 @@ def main():
                 break
             time.sleep(2)
         t0 = time.time()
-        while time.time() - t0 < 60 and not ("Kết thúc" in state()):
+        while time.time() - t0 < 60 and not any(w in state() for w in ("Kết thúc", "Finished")):
             time.sleep(3)
         F.log("after approval flow:", state())
 

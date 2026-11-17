@@ -26,13 +26,13 @@ Goal: let an AI agent drive Windows desktop apps as fast and cheaply as turbo-br
   - Phone scans, creates its own keypair in Android Keystore (EC P-256, non-exportable), sends its public key + the code. Hub stores the phone key; PC shows "paired: <device name>".
   - Every request from the phone is signed (method, path, body hash, timestamp, nonce); hub rejects bad signatures, old timestamps (>60 s) and replayed nonces. Responses/events are signed by the hub key, phone verifies (no fake hub).
   - Sessions: after a valid signed `session/start`, a short-lived session (2 h). Unpaired devices: rejected and logged, PC shows an alert.
-  - Unpair / revoke a phone from the PC tray or from the phone itself.
+  - Unpair / revoke a phone from the PC (`python -m turbo_hub revoke <id>`) or from the phone itself.
 - Per-action approval (owner: "duyệt theo hành động cũng được"): dangerous actions pause and push an approval request to the phone with the target window, control name and a cropped screenshot of the control; Allow / Deny; times out to Deny after 2 min.
   - Dangerous = clicking/pressing controls named like Send, Gửi, Delete, Xoá, Pay, Thanh toán, Buy, Install, Uninstall, Format, Shut down, Sign out, Submit, Post, Publish, Confirm/OK inside a dialog titled delete/remove/payment; typing Enter in a chat/email compose; any action in Windows Settings > Accounts/Privacy & security, Registry Editor, PowerShell/Terminal/cmd windows, Task Manager end task.
   - Ordinary actions (read, inspect, type into normal fields, scroll, open apps on the allowlist) are not asked.
 - Always on, not configurable off:
   - Deny zones: password fields (UIA IsPassword: never read, never type; secrets only via `$secret:NAME` from a local file like turbo), Bitwarden/password managers, banking apps, UAC/secure desktop, Windows Security app.
-  - Visible indicator while the agent acts (tray icon turns red + small always-on-top banner "AI đang điều khiển").
+  - Visible indicator while the agent acts: an orange glow on every screen edge plus a banner while input is locked (there is no tray icon).
   - Emergency stop: global hotkey Ctrl+Alt+Shift+K on the PC and STOP on the phone; kills the running agent process and blocks new actions until resumed from the phone.
   - Audit log: append-only JSONL, each line hash-chained to the previous (sha256), every action with window, control, action, result, approval id; thumbnails before/after for dangerous actions. Viewable on the phone.
   - Screen text is data, not instructions: wrap page/control text in content boundary markers like turbo.
@@ -70,7 +70,7 @@ NONCE`; replies and SSE events signed by the hub key pinned at pairing; 60 s win
 - Approvals: desktop-mcp classifies and asks via files in `desktop-state/`, the hub relays to the phone; hub categories are the fallback (`approval.engine`). STOP file, RELEASE (take over), `input_lock.json` and `indicator.json` are the hub/desktop-mcp contract.
 - One long-lived agent process (stream-json in/out), in a job object so it dies with the hub; pluggable command template.
 - Wake-on-LAN relay in `relay/` (stdlib only, own pairing list). Config: `hub/turbo_hub/defaults.toml` + presets.
-- Android UI is intentionally not built: `design/mockups/` first, then Compose. Hub, client, Keystore, service, notifications, i18n strings exist.
+- Android UI (Compose, v3 design in `design/LIVE_V3.md`) is built: Việc, Duyệt, Báo cáo, Cài đặt, full-screen screen view with zoom.
 
 ## Out of scope for v0
 

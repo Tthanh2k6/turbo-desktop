@@ -88,7 +88,7 @@ def write_config() -> Path:
     claude = find_claude().replace("\\", "/")
     cmd = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--model", "haiku", "--mcp-config", "{mcp_config}", "--strict-mcp-config", "--tools", "",
-           "--permission-prompt-tool", "{approval_tool}"]
+           "--permission-prompt-tool", "{approval_tool}", "--append-system-prompt", "{system_prompt}"]
     cfg.write_text(f'preset = "balanced"\n[server]\nconnections = ["local"]\n[agent]\n'
                    f'mcp_config = "{str(mcp).replace(chr(92), "/")}"\ncommand = {json.dumps(cmd)}\n', "utf-8")
     return cfg
