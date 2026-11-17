@@ -1,0 +1,143 @@
+"""Rules engine: loads rules/default_rules.toml, merges the user's turbo-desktop.toml, decides allow/ask/deny.
+
+Plain functions and dicts. Rule fields are documented at the top of default_rules.toml.
+"""
+from __future__ import annotations
+
+import os
+import re
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+PRESETS = ("easy", "balanced", "strict")
+READ_ONLY_ACTIONS = {"read", "scroll", "focus", "expand", "wait", "inspect"}
+DEFAULT_RULES_FILE = Path(__file__).resolve().parents[2] / "rules" / "default_rules.toml"
+
+
+@dataclass
+class Decision:
+    level: str = "allow"          # allow | ask | deny
+    rule: str = ""                # id of the rule that matched ("" = nothing matched)
+    reason: str = ""
+
+    def to_dict(self) -> dict:
+        return {"dangerous": self.level != "allow", "level": self.level, "rule": self.rule, "reason": self.reason}
+
+
+@dataclass
+class RuleSet:
+    preset: str = "easy"
+    rules: list = field(default_factory=list)
+    allowlist: set = field(default_factory=set)
+    source: str = ""
+
+
+def _read_toml(path) -> dict:
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+def config_candidates() -> list:
+    """One lookup order shared with the hub: env var, ./turbo-desktop.toml (cwd),
+    %APPDATA%/turbo-desktop/turbo-desktop.toml, ~/turbo-desktop.toml."""
+    appdata = os.environ.get("APPDATA")
+    return [Path.cwd() / "turbo-desktop.toml",
+            *([Path(appdata) / "turbo-desktop" / "turbo-desktop.toml"] if appdata else []),
+            Path.home() / "turbo-desktop.toml"]
+
+
+def find_user_config() -> Path | None:
+    env = os.environ.get("TURBO_DESKTOP_CONFIG")
+    if env:  # the env var wins even if its file is missing (then there is no user config)
+        return Path(env) if Path(env).exists() else None
+    for p in config_candidates():
+        if p.exists():
+            return p
+    return None
+
+
+def build_ruleset(default: dict, user: dict | None = None, preset: str | None = None) -> RuleSet:
+    """Merge: user rules first (they win), then default rules of the chosen preset, with per-rule overrides."""
+    user = user or {}
+    section = user.get("desktop", user)
+    chosen = (preset or os.environ.get("TURBO_DESKTOP_PRESET") or section.get("preset") or "easy").lower()
+    if chosen not in PRESETS:
+        chosen = "easy"
+    overrides = section.get("overrides", {})
+    rules = []
+    for r in section.get("rules", []):
+        rules.append({"presets": list(PRESETS), **r, "id": r.get("id", "user-rule")})
+    for r in default.get("rules", []):
+        if chosen not in r.get("presets", PRESETS):
+            continue
+        ov = overrides.get(r["id"], {})
+        if ov.get("disabled"):
+            continue
+        rules.append({**r, **({"level": ov["level"]} if "level" in ov else {})})
+    allow = {a.lower() for a in default.get("apps", {}).get("allowlist", [])}
+    allow |= {a.lower() for a in section.get("apps", {}).get("allowlist", [])}
+    return RuleSet(chosen, rules, allow)
+
+
+_cache: dict = {"key": None, "rs": None}
+
+
+def load_ruleset(preset: str | None = None, config_path=None) -> RuleSet:
+    cfg = Path(config_path) if config_path else find_user_config()
+    key = (preset, str(cfg), cfg.stat().st_mtime if cfg else 0, os.environ.get("TURBO_DESKTOP_PRESET"),
+           DEFAULT_RULES_FILE.stat().st_mtime)
+    if _cache["key"] == key:
+        return _cache["rs"]
+    rs = build_ruleset(_read_toml(DEFAULT_RULES_FILE), _read_toml(cfg) if cfg else None, preset)
+    rs.source = str(cfg) if cfg else "defaults"
+    _cache.update(key=key, rs=rs)
+    return rs
+
+
+# ---------------------------------------------------------------- matching
+
+def _rx(pattern, text) -> bool:
+    return bool(re.search(pattern, text or "", re.I))
+
+
+def rule_matches(r: dict, ctx: dict, allowlist: set) -> bool:
+    proc = (ctx.get("process") or "").lower().removesuffix(".exe")
+    action = ctx.get("action", "click")
+    if "process" in r and proc not in {p.lower() for p in r["process"]}:
+        return False
+    if "action" in r and action not in r["action"]:
+        return False
+    if r.get("level") != "deny" and action in READ_ONLY_ACTIONS and not r.get("include_read"):
+        return False
+    if "title" in r and not _rx(r["title"], ctx.get("title")):
+        return False
+    if "name" in r:
+        hay = " ".join(filter(None, [ctx.get("name"), ctx.get("automation_id"), ctx.get("help_text")]))
+        if not _rx(r["name"], hay):
+            return False
+    if "role" in r and (ctx.get("role") or "").lower() not in {x.lower() for x in r["role"]}:
+        return False
+    if "dialog" in r and not _rx(r["dialog"], " ".join(filter(None, [ctx.get("dialog_title"), ctx.get("dialog_text")]))):
+        return False
+    if "context" in r and not _rx(r["context"], ctx.get("context")):
+        return False
+    if "keys" in r and not _rx(r["keys"], (ctx.get("keys") or "").strip()):
+        return False
+    if r.get("unnamed") and (ctx.get("name") or "").strip():
+        return False
+    if r.get("unnamed") and (ctx.get("help_text") or "").strip():
+        return False
+    if "multiline" in r and bool(ctx.get("multiline")) != r["multiline"]:
+        return False
+    if r.get("not_allowlisted") and proc in allowlist:
+        return False
+    return True
+
+
+def decide(ctx: dict, ruleset: RuleSet | None = None) -> Decision:
+    rs = ruleset or load_ruleset()
+    for r in rs.rules:
+        if rule_matches(r, ctx, rs.allowlist):
+            return Decision(r.get("level", "ask"), r.get("id", "?"), r.get("why", ""))
+    return Decision("allow")

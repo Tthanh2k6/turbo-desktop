@@ -1,0 +1,21 @@
+[project]
+name = "turbo-desktop"
+version = "0.0.1"
+description = "UIA-based MCP server for driving Windows desktop apps with compact snapshots"
+requires-python = ">=3.12"
+dependencies = ["mcp", "uiautomation", "pywin32"]
+
+[project.scripts]
+turbo-desktop = "turbo_desktop.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["realinput: needs TURBO_DESKTOP_REAL_INPUT=1"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

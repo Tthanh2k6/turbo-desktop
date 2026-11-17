@@ -1,0 +1,176 @@
+# turbo-desktop default rules. Plain data: edit freely, or override from turbo-desktop.toml.
+#
+# How a rule is read
+#   - Rules are checked top to bottom; the first rule that matches decides.
+#   - level = "deny"  : the action is refused (deny rules also apply to reading a window)
+#             "ask"   : the owner must approve (phone, or a Windows Allow/Deny box when no phone is connected)
+#             "allow" : go ahead
+#   - Nothing matched = allow.
+#   - presets = which presets contain the rule: "easy" (default), "balanced", "strict".
+#
+# Match fields (all given fields must match; lists are "any of"; text patterns are case-insensitive regex)
+#   process    list of exe names without .exe, lowercase
+#   title      regex on the window title
+#   name       regex on the control name, AutomationId and tooltip (vi and en words together)
+#   role       list of control types: button, edit, menuitem, ...
+#   action     list: click, invoke, toggle, select, type, set_value, press_keys, launch, ocr_click
+#   dialog     regex on the title/text of the dialog the control sits in
+#   context    regex on the page heading (used for Windows Settings)
+#   keys       regex on the keys being pressed (e.g. Enter)
+#   unnamed    true = a button with no name and no tooltip
+#   multiline  true = a multi-line text box
+#   not_allowlisted  true = the app is not in the app allowlist (see [apps] below)
+#
+# Hard floor (in code, cannot be switched off here): password-field values are never returned or typed,
+# the STOP file/hotkey blocks everything, and the audit log is always written.
+
+[apps]
+# Apps treated as "known" by not_allowlisted rules. Add yours in turbo-desktop.toml.
+allowlist = ["notepad", "calc", "calculatorapp", "calculator", "mspaint", "paintstudio.view", "explorer",
+             "turbo_fixture", "turbo_editor", "turbo_canvas", "systemsettings", "applicationframehost", "snippingtool"]
+
+# ---------------------------------------------------------------- deny zones (all presets)
+
+[[rules]]
+id = "password-managers"
+level = "deny"
+presets = ["easy", "balanced", "strict"]
+process = ["bitwarden", "keepass", "keepassxc", "1password", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "protonpass"]
+why = "Password managers are never driven by the AI."
+
+[[rules]]
+id = "password-managers-title"
+level = "deny"
+presets = ["easy", "balanced", "strict"]
+title = "(bitwarden|keepass|1password|lastpass|dashlane|nordpass|credential manager|windows hello)"
+why = "Password manager or credential window."
+
+[[rules]]
+id = "uac-lock-security-app"
+level = "deny"
+presets = ["easy", "balanced", "strict"]
+process = ["consent", "logonui", "credentialuibroker", "lockapp", "winlogon", "securityhealthui", "securityhealthsystray", "windowsdefender"]
+why = "UAC, lock screen and the Windows Security app."
+
+[[rules]]
+id = "uac-title"
+level = "deny"
+presets = ["easy", "balanced", "strict"]
+title = "(user account control|kiểm soát tài khoản|windows security|bảo mật windows)"
+why = "UAC prompt or Windows Security window."
+
+[[rules]]
+id = "banking"
+level = "deny"
+presets = ["strict"]
+title = "(vietcombank|techcombank|vietinbank|\\bbidv\\b|mbbank|mb bank|\\bacb\\b|tpbank|vpbank|sacombank|agribank|\\bmomo\\b|zalopay|paypal|internet banking|ngân hàng|ebanking)"
+why = "Banking and payment apps."
+
+# ---------------------------------------------------------------- ask: the Easy list
+
+[[rules]]
+id = "permanent-delete"
+level = "ask"
+presets = ["easy", "balanced", "strict"]
+action = ["click", "invoke", "toggle", "select", "ocr_click"]
+name = "(permanently delete|delete permanently|delete forever|xoá vĩnh viễn|xóa vĩnh viễn|empty recycle bin|dọn thùng rác|format)"
+why = "Permanent delete or format."
+
+[[rules]]
+id = "payment"
+level = "ask"
+presets = ["easy", "balanced", "strict"]
+action = ["click", "invoke", "toggle", "select", "ocr_click"]
+name = "(\\bpay\\b|pay now|thanh toán|place order|đặt hàng|checkout|buy now|purchase|mua ngay|transfer|chuyển tiền)"
+why = "Payment."
+
+[[rules]]
+id = "uninstall"
+level = "ask"
+presets = ["easy", "balanced", "strict"]
+action = ["click", "invoke", "toggle", "select", "ocr_click"]
+name = "(uninstall|gỡ cài đặt|gỡ bỏ)"
+why = "Uninstall."
+
+[[rules]]
+id = "settings-accounts-privacy"
+level = "ask"
+presets = ["easy", "balanced", "strict"]
+process = ["systemsettings", "applicationframehost"]
+title = "(settings|cài đặt)"
+context = "(accounts?|tài khoản|privacy|quyền riêng tư|windows update|recovery)"
+why = "Windows Settings > Accounts / Privacy & security."
+
+# ---------------------------------------------------------------- ask: added by Balanced
+
+[[rules]]
+id = "shells-and-admin-tools"
+level = "ask"
+presets = ["balanced", "strict"]
+process = ["regedit", "powershell", "pwsh", "cmd", "windowsterminal", "wt", "conhost", "openconsole", "mmc", "gpedit", "taskschd", "taskmgr"]
+why = "Shell, registry or admin tool."
+
+[[rules]]
+id = "commit-buttons"
+level = "ask"
+presets = ["balanced", "strict"]
+action = ["click", "invoke", "toggle", "select", "ocr_click"]
+name = "\\b(send|gửi|delete|xoá|xóa|remove|install|cài đặt|shut ?down|tắt máy|restart|khởi động lại|sign ?out|đăng xuất|log ?out|submit|post|đăng|publish|end task|kết thúc tác vụ|reset)\\b"
+why = "Button that sends, deletes, installs, publishes or signs out."
+
+[[rules]]
+id = "enter-in-chat"
+level = "ask"
+presets = ["balanced", "strict"]
+action = ["press_keys"]
+keys = "^\\{?(enter|return)\\}?$"
+process = ["outlook", "olk", "thunderbird", "zalo", "teams", "ms-teams", "discord", "telegram", "slack", "whatsapp", "messenger", "skype"]
+why = "Enter in a chat or mail app sends the message."
+
+[[rules]]
+id = "enter-in-compose"
+level = "ask"
+presets = ["balanced", "strict"]
+action = ["press_keys"]
+keys = "^\\{?(enter|return)\\}?$"
+name = "(message|compose|soạn|tin nhắn|chat|reply|trả lời)"
+why = "Enter in a compose box sends the message."
+
+# ---------------------------------------------------------------- ask: added by Strict
+
+[[rules]]
+id = "confirm-in-danger-dialog"
+level = "ask"
+presets = ["strict"]
+action = ["click", "invoke", "ocr_click"]
+name = "^(ok|yes|có|đồng ý|confirm|xác nhận|continue|tiếp tục|apply|áp dụng)$"
+dialog = "(delete|remove|xoá|xóa|payment|thanh toán|uninstall|format)"
+why = "OK/Yes inside a delete or payment dialog."
+
+[[rules]]
+id = "unnamed-button-unknown-app"
+level = "ask"
+presets = ["strict"]
+action = ["click", "invoke", "ocr_click"]
+role = ["button", "splitbutton"]
+unnamed = true
+not_allowlisted = true
+why = "Icon-only button in an app that is not on the allowlist."
+
+[[rules]]
+id = "enter-multiline-unknown-app"
+level = "ask"
+presets = ["strict"]
+action = ["press_keys"]
+keys = "^\\{?(enter|return)\\}?$"
+multiline = true
+not_allowlisted = true
+why = "Enter in a multi-line box of an app that is not on the allowlist may send."
+
+[[rules]]
+id = "launch-unknown-app"
+level = "ask"
+presets = ["strict"]
+action = ["launch"]
+not_allowlisted = true
+why = "Starting an app that is not on the allowlist."
