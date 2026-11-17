@@ -10,9 +10,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /**
- * Placeholder host. The Compose screens are intentionally not built yet: the owner reviews design/mockups first.
- * What IS here and tested: notification Allow/Deny actions (biometric, then signed answer) and, in debug builds only,
- * an adb hook (`dbg_action`) so the hub/app plumbing can be exercised on the emulator without a UI.
+ * Hosts the Compose UI (`Ui.kt`). Also handles notification Allow/Deny actions (biometric, then signed answer) and,
+ * in debug builds only, an adb hook (`dbg_action`) used by `hub/scripts/emulator_*.py`.
  */
 class MainActivity : FragmentActivity() {
     override fun attachBaseContext(newBase: android.content.Context) = super.attachBaseContext(AppLang.wrap(newBase))
