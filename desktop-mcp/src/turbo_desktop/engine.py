@@ -2,6 +2,8 @@
 a fallback, gated by owner-idle check), OCR fallback for windows with an empty UIA tree."""
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import re
@@ -9,7 +11,14 @@ import shutil
 import tempfile
 import subprocess
 import time
+import unicodedata
 from pathlib import Path
+from typing import Iterable
+
+try:
+    import winreg
+except ImportError:  # pragma: no cover
+    winreg = None  # type: ignore[assignment]
 
 import uiautomation as auto
 import win32api
@@ -20,7 +29,7 @@ from . import rules as rules_mod
 from . import security as sec
 from . import border as border_mod
 from . import winsys
-from .inputlock import InputLock
+from .inputlock import InputLock, StateBridge
 
 P = auto.PatternId
 
@@ -38,6 +47,240 @@ def no_activate_startupinfo():
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 4
     return si
+
+
+# ---------------------------------------------------------------- Start Menu & AppsFolder resolution (pure + cached)
+
+def fold_text(s: str) -> str:
+    """Case- and Vietnamese-diacritic-insensitive normalisation (handles đ/Đ and NFD combining marks)."""
+    s = (s or "").strip().lower().replace("đ", "d")
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+normalize_app_name = fold_text
+
+
+def _clean_query(query: str) -> str:
+    q = fold_text(query)
+    for suf in (".exe", ".lnk"):
+        if q.endswith(suf) and len(q) > len(suf):
+            q = q[:-len(suf)].strip()
+    return q
+
+
+def start_menu_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    for env_key in ("ProgramData", "APPDATA"):
+        base = os.environ.get(env_key)
+        if base:
+            p = Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            if p.exists():
+                dirs.append(p)
+    return dirs
+
+
+def iter_start_menu_shortcuts(dirs: Iterable[Path | str] | None = None) -> list[Path]:
+    roots = [Path(d) for d in dirs] if dirs is not None else start_menu_dirs()
+    out: list[Path] = []
+    for r in roots:
+        try:
+            if r.exists():
+                out.extend(sorted(r.rglob("*.lnk")))
+        except OSError:
+            continue
+    return out
+
+
+def match_start_menu(query: str, shortcuts: Iterable[Path | str]) -> Path | None:
+    """Match a Start Menu .lnk file by stem (case- and Vietnamese-diacritic-insensitive, exact match first then prefix)."""
+    q = _clean_query(query)
+    if not q:
+        return None
+    best: tuple[tuple[int, int, str], Path] | None = None
+    for item in shortcuts:
+        p = Path(item)
+        if p.suffix and p.suffix.lower() != ".lnk":
+            continue
+        stem = p.stem
+        folded = fold_text(stem)
+        if not folded:
+            continue
+        if folded == q:
+            rank = (0, len(folded), folded)
+        elif folded.startswith(q):
+            rank = (1, len(folded), folded)
+        else:
+            continue
+        if best is None or rank < best[0]:
+            best = (rank, p)
+    return best[1] if best is not None else None
+
+
+def parse_start_apps(raw: str) -> list[dict]:
+    """Parse `Get-StartApps` output (JSON, CSV, or table) into [{"name": str, "app_id": str}, ...]."""
+    text = (raw or "").strip()
+    if not text:
+        return []
+    if text[0] in "[{":
+        try:
+            parsed = json.loads(text)
+            items = [parsed] if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+            out = []
+            for it in items:
+                if isinstance(it, dict):
+                    name = str(it.get("Name") or it.get("name") or "").strip()
+                    aid = str(it.get("AppID") or it.get("AppId") or it.get("app_id") or "").strip()
+                    if name and aid:
+                        out.append({"name": name, "app_id": aid})
+            return out
+        except ValueError:
+            pass
+    lines = [ln.strip("\r") for ln in text.splitlines() if ln.strip()]
+    if lines and lines[0].lstrip().startswith('"') and "," in lines[0]:
+        out = []
+        for row in csv.DictReader(io.StringIO("\n".join(lines))):
+            name = (row.get("Name") or row.get("name") or "").strip()
+            aid = (row.get("AppID") or row.get("AppId") or row.get("app_id") or "").strip()
+            if name and aid:
+                out.append({"name": name, "app_id": aid})
+        if out:
+            return out
+    out = []
+    for ln in lines:
+        s = ln.strip()
+        if not s or re.fullmatch(r"[-\s]+", s):
+            continue
+        if re.match(r"^name\s+appid$", s, re.I):
+            continue
+        parts = re.split(r"\s{2,}", s)
+        if len(parts) >= 2:
+            name, aid = " ".join(parts[:-1]).strip(), parts[-1].strip()
+        else:
+            toks = s.rsplit(None, 1)
+            if len(toks) != 2:
+                continue
+            name, aid = toks[0].strip(), toks[1].strip()
+        if name and aid:
+            out.append({"name": name, "app_id": aid})
+    return out
+
+
+def match_start_apps(query: str, apps: Iterable[dict | tuple]) -> dict | None:
+    """Match a UWP / Start app by display name (case- and Vietnamese-diacritic-insensitive, exact first then prefix)."""
+    q = _clean_query(query)
+    if not q:
+        return None
+    best: tuple[tuple[int, int, str], dict] | None = None
+    for item in apps:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            name, aid = str(item[0]).strip(), str(item[1]).strip()
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("Name") or "").strip()
+            aid = str(item.get("app_id") or item.get("AppID") or item.get("AppId") or "").strip()
+        else:
+            continue
+        if not name or not aid:
+            continue
+        folded = fold_text(name)
+        if not folded:
+            continue
+        if folded == q:
+            rank = (0, len(folded), folded)
+        elif folded.startswith(q):
+            rank = (1, len(folded), folded)
+        else:
+            continue
+        entry = {"name": name, "app_id": aid}
+        if best is None or rank < best[0]:
+            best = (rank, entry)
+    return best[1] if best is not None else None
+
+
+_START_APPS_CACHE: dict = {"at": None, "apps": []}
+
+
+def _run_get_start_apps() -> str:
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-StartApps | ConvertTo-Json -Compress"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        startupinfo=no_activate_startupinfo(),
+    )
+    return r.stdout or ""
+
+
+def list_start_apps(now=time.monotonic, runner=None, ttl: float = 600.0, force_refresh: bool = False) -> list[dict]:
+    """Enumerate Start/UWP apps via Get-StartApps once and cache for `ttl` seconds (default 10 min)."""
+    t = float(now())
+    if not force_refresh and _START_APPS_CACHE["at"] is not None and (t - _START_APPS_CACHE["at"]) < ttl:
+        return list(_START_APPS_CACHE["apps"])
+    fn = runner or _run_get_start_apps
+    try:
+        raw = fn()
+        apps = parse_start_apps(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        apps = []
+    _START_APPS_CACHE["at"] = t
+    _START_APPS_CACHE["apps"] = apps
+    return list(apps)
+
+
+def find_app_path(name: str) -> str | None:
+    """Look up `name` in Windows Registry App Paths (HKCU then HKLM)."""
+    if winreg is None or not name:
+        return None
+    key_name = name if name.lower().endswith(".exe") else f"{name}.exe"
+    subkey = rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{key_name}"
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, subkey) as k:
+                val, _ = winreg.QueryValueEx(k, "")
+                if val:
+                    p = os.path.expandvars(str(val).strip().strip('"'))
+                    if Path(p).is_file():
+                        return p
+        except OSError:
+            continue
+    return None
+
+
+def resolve_launch_target(target: str, *, which_fn=shutil.which, app_paths_fn=find_app_path,
+                          shortcuts: Iterable[Path | str] | None = None,
+                          start_apps: Iterable[dict | tuple] | None = None) -> dict | None:
+    """Resolve `target` in order:
+      1. explicit path / PATH executable / Registry App Paths -> {"how": "path", "matched": <name>, "path": <path>}
+      2. Start Menu .lnk (exact then prefix, diacritic-insensitive) -> {"how": "start-menu", "matched": <stem>, "shortcut": <lnk>, "path": <lnk>}
+      3. UWP shell:AppsFolder -> {"how": "appsfolder", "matched": <name>, "appId": <id>, "path": "shell:AppsFolder\\<id>"}
+    """
+    raw = (target or "").strip()
+    if not raw:
+        return None
+    t = APP_ALIASES.get(raw.lower(), raw)
+    if os.path.isabs(t) or os.sep in t or "/" in t:
+        return {"how": "path", "matched": Path(t).name or t, "path": t}
+    if which_fn is not None:
+        w = which_fn(t)
+        if w:
+            return {"how": "path", "matched": Path(w).name or w, "path": w}
+    if app_paths_fn is not None:
+        ap = app_paths_fn(t)
+        if ap:
+            return {"how": "path", "matched": Path(ap).name or ap, "path": ap}
+    lnks = iter_start_menu_shortcuts() if shortcuts is None else shortcuts
+    lnk = match_start_menu(raw, lnks)
+    if lnk is not None:
+        return {"how": "start-menu", "matched": lnk.stem, "shortcut": str(lnk), "path": str(lnk)}
+    apps = list_start_apps() if start_apps is None else start_apps
+    app = match_start_apps(raw, apps)
+    if app is not None:
+        return {
+            "how": "appsfolder",
+            "matched": app["name"],
+            "appId": app["app_id"],
+            "path": f"shell:AppsFolder\\{app['app_id']}",
+        }
+    return None
 
 
 _NAMED_KEYS = {"enter": "Enter", "return": "Enter", "esc": "Esc", "escape": "Esc", "tab": "Tab", "delete": "Delete", "del": "Delete",
@@ -123,8 +366,15 @@ class Desktop:
         self._own_input_at = 0.0
         self._pending_invokes: dict = {}
         self._note: dict = {}
-        self.lock = InputLock()
         self.indicator = border_mod.Indicator(disabled_by_env=os.environ.get("TURBO_DESKTOP_NO_INDICATOR") == "1")
+        self.lock = InputLock(indicator=self.indicator)
+        self.bridge = StateBridge(
+            self.lock,
+            self.indicator,
+            allow_windows=(os.environ.get("TURBO_DESKTOP_NO_INDICATOR") != "1" and not no_input()),
+        )
+        if sec.bridge_dir() is not None:
+            self.bridge.start()
 
     # ------------------------------------------------------------ windows
 
@@ -500,7 +750,8 @@ class Desktop:
         previous foreground window and cursor. Raises owner_took_over if the owner pressed Esc x3 meanwhile."""
         if no_input():
             raise ToolError("real input disabled (TURBO_DESKTOP_NO_INPUT=1) and no UIA pattern available")
-        self.wait_owner_idle()
+        if not (self.lock.locked and getattr(self.lock, "remote_task", False)):
+            self.wait_owner_idle()
         cfg = rules_mod.load_ruleset().input_lock
         use_lock = cfg["mode"] in ("real_input", "whole_task") and os.environ.get("TURBO_DESKTOP_INPUT_LOCK", "1") != "0"
         prev_fg = win32gui.GetForegroundWindow()
@@ -1037,9 +1288,16 @@ class Desktop:
         base = {"action": "launch", "control": t, "window": "", "process": exe_name}
         if sec.stop_requested():
             raise ToolError("emergency stop active", stopped=True)
-        path = t if os.path.isabs(t) or os.sep in t or "/" in t else (shutil.which(t) or t)
+        resolved = resolve_launch_target(target)
+        how = resolved["how"] if resolved else "path"
+        matched = resolved["matched"] if resolved else (Path(t).name or t)
+        path = resolved["path"] if resolved else t
         argv = [path] + (args.split() if args else [])
-        extra = {}
+        extra: dict = {"how": how, "matched": matched}
+        if resolved and "shortcut" in resolved:
+            extra["shortcut"] = resolved["shortcut"]
+        if resolved and "appId" in resolved:
+            extra["appId"] = resolved["appId"]
         if restores:
             require_clean = os.environ.get("TURBO_DESKTOP_REQUIRE_CLEAN") == "1"
             clean = self._clean_launch(exe_name, path) if (rs.preset == "strict" or require_clean) else None
@@ -1048,9 +1306,9 @@ class Desktop:
                                 f"(TURBO_DESKTOP_REQUIRE_CLEAN=1)", rule="launch-session-restore")
             if clean:
                 argv = clean[0]
-                extra = {"launchMode": "clean", "clean": clean[1]}
+                extra = {**extra, "launchMode": "clean", "clean": clean[1]}
             else:
-                extra = {"launchMode": "normal",
+                extra = {**extra, "launchMode": "normal",
                          "warn": "this app may reopen the user's previous files; their contents will be visible to the model"}
         if cls.level == "ask":
             ok, aid = sec.request_approval(self.audit, {**base, "reason": cls.reason, "rule": cls.rule})
@@ -1059,7 +1317,10 @@ class Desktop:
         before_list = self.windows_list()
         before = {d["hwnd"] for d in before_list}
         try:
-            subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
+            if how in ("start-menu", "appsfolder"):
+                os.startfile(path)
+            else:
+                subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
         except OSError as e:
             raise ToolError(f"cannot start {t}: {e}")
         end = time.time() + float(wait)
@@ -1077,19 +1338,25 @@ class Desktop:
             # Single-instance apps (Win11 Notepad, Explorer, Settings) may answer with a window that already existed.
             # Never hand that back by default: it can hold the owner's documents.
             now = self.windows_list()
-            reused = [d for d in now if d["hwnd"] in before and (d["process"].lower() == exe_name or d["focused"])]
-            reused = [d for d in reused if d["process"].lower() == exe_name or (
+            cand_names = {exe_name, fold_text(matched).replace(" ", "")}
+            reused = [d for d in now if d["hwnd"] in before and (d["process"].lower() in cand_names or d["focused"])]
+            reused = [d for d in reused if d["process"].lower() in cand_names or (
                 d["focused"] and d["hwnd"] not in {b["hwnd"] for b in before_list if b.get("focused")})]
             if reused:
                 extra = {**extra, "reused_existing_window": True}
                 if return_existing:
                     new = reused
-        self.audit.write(event="action", ok=bool(new) or bool(extra.get("reused_existing_window")), via="launch", new_windows=[d["title"] for d in new], **base)
+        self.audit.write(event="action", ok=bool(new) or bool(extra.get("reused_existing_window")), via="launch",
+                         how=how, matched=matched, new_windows=[d["title"] for d in new], **base)
         return {"ok": True, **extra, "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new]}
 
     def close_launched(self):
         """Close every window this Desktop launched (matched by window handle, so UWP apps whose process differs
         from the launcher are found too). Windows we did not launch are never touched."""
+        try:
+            self.bridge.stop()
+        except Exception:
+            pass
         for hwnd in list(self.launched):
             try:
                 if win32gui.IsWindow(hwnd):

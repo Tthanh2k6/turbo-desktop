@@ -114,6 +114,18 @@ A window whose title or document name looks like a secret (`.env`, `secret(s)`, 
 
 `launch_app` returns only windows that did not exist before the call. If an app answers with a window that was already open (Windows 11 Notepad and Explorer do this), the result says `reused_existing_window: true` and gives no ref for it, unless you pass `returnExisting=true`.
 
+When the target given to `launch_app` is not a file path, an executable on `PATH`, or a Windows `App Paths` registry entry, `launch_app` searches `.lnk` shortcuts in `%ProgramData%\Microsoft\Windows\Start Menu\Programs` and `%APPDATA%\Microsoft\Windows\Start Menu\Programs` by file stem (case- and Vietnamese-diacritic-insensitive, exact match first, then prefix), and then UWP apps in `shell:AppsFolder` (`Get-StartApps`, cached for 10 minutes). It launches the match with `os.startfile` and returns `{"how": "path" | "start-menu" | "appsfolder", "matched": "<name>"}`.
+
+## Hub state-dir bridge
+
+When `TURBO_DESKTOP_STATE_DIR` is set, `desktop-mcp` syncs these JSON files in that folder (written atomically via temp file + `os.replace`):
+
+- `input_lock.json`: `{"locked", "mode", "since", "reason"}` whenever the lock changes.
+- `indicator.json`: `{"state": "idle" | "acting" | "input_locked"}`.
+- `RELEASE`: if created by the hub, `desktop-mcp` releases the input lock at once and deletes the file.
+- `task_active.json`: read every second. While present with a `heartbeat` under 15 s old and total time under `max_minutes` (default 15), `desktop-mcp` holds the whole-task input lock, solid edge glow, and remote banner (`AI đang làm việc theo lệnh từ điện thoại · Esc ×3 để lấy lại · Ctrl+Alt+Shift+K để dừng`). Pressing Esc three times releases the lock and writes `owner_took_over.json` = `{"at": epoch}`.
+- `screen_view.json`: while `until` is in the future, shows a small banner (`Điện thoại đang xem màn hình`) without locking input.
+
 ## Editing the rules
 
 The rules are data: `rules/default_rules.toml` (read the comments at its top). Each rule has an `id`, a `level` (`allow`, `ask`, `deny`) and matchers (process, window title, control name in Vietnamese and English, role, action, ...). The first match wins. A refusal or question always names the rule: `{"rule": "payment", ...}`.

@@ -30,6 +30,48 @@ def state_dir() -> Path:
     return d
 
 
+def bridge_dir(explicit: Path | str | None = None) -> Path | None:
+    """State directory for hub <-> desktop-mcp bridge files. Active only when TURBO_DESKTOP_STATE_DIR is set
+    (or an explicit path is injected in tests)."""
+    raw = str(explicit) if explicit is not None else os.environ.get("TURBO_DESKTOP_STATE_DIR")
+    if not raw:
+        return None
+    d = Path(raw)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically via temp file + os.replace in the same directory."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        for i in range(5):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if i == 4:
+                    raise
+                time.sleep(0.01)
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def read_json_safe(path: Path) -> dict | None:
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def stop_requested() -> bool:
     """Emergency stop: the hub (hotkey / phone STOP) creates <state>/STOP. Blocks every action."""
     return (state_dir() / "STOP").exists()

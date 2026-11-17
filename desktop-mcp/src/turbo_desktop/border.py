@@ -66,6 +66,17 @@ class GlowState:
             return "acting"
         return "off"
 
+    def bridge_state(self) -> str:
+        if self.suppressed:
+            return "idle"
+        if self.locked:
+            return "input_locked"
+        if self.real_active:
+            return "acting"
+        if self.last_activity is not None and self.now() - self.last_activity <= self.linger:
+            return "acting"
+        return "idle"
+
 
 def parse_color(s: str | None) -> tuple[int, int, int]:
     try:
@@ -356,17 +367,29 @@ class Glow:
 class Indicator:
     """What the engine calls. Lazily starts the renderer; every call is cheap and never raises."""
 
-    def __init__(self, enabled=True, color=DEFAULT_COLOR, linger=3.0, disabled_by_env=False):
+    def __init__(self, enabled=True, color=DEFAULT_COLOR, linger=3.0, disabled_by_env=False, state_dir=None):
         self.state = GlowState(linger=linger, enabled=enabled)
         self.glow = Glow(self.state, color)
         self.disabled = disabled_by_env
+        self._state_dir = state_dir
+        self._last_bridge = None
 
     def configure(self, border: bool, color: str | None):
         self.state.enabled = bool(border)
         if color:
             self.glow.rgb = parse_color(color)
 
+    def write_bridge(self):
+        d = sec.bridge_dir(self._state_dir)
+        if d is None:
+            return
+        st = self.state.bridge_state()
+        if st != self._last_bridge or not (d / "indicator.json").exists():
+            self._last_bridge = st
+            sec.atomic_write_json(d / "indicator.json", {"state": st})
+
     def _go(self):
+        self.write_bridge()
         if not self.disabled:
             try:
                 self.glow.start()
@@ -387,3 +410,4 @@ class Indicator:
 
     def hide_now(self):
         self.state.hide_now()
+        self.write_bridge()

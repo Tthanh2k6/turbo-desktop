@@ -118,9 +118,10 @@ def batch_actions(steps: list[dict], window: str | None = None, returnSnapshot: 
 
 @mcp.tool()
 def launch_app(target: str, args: str = "", wait: float = 8.0, returnExisting: bool = False) -> str:
-    """Start an app (notepad, calc, explorer, paint or a path). Returns the NEW windows only. If the app answered with a
-    window that already existed the result says reused_existing_window: true and returns no ref for it (it may hold the
-    owner's documents) unless returnExisting=true."""
+    """Start an app by executable/alias (notepad, calc, explorer, paint), path, Start Menu display name (e.g. 'Zalo',
+    'Cốc Cốc'; case- and Vietnamese-diacritic-insensitive) or UWP app name. Returns the NEW windows only and how it
+    was resolved ({how: 'path'|'start-menu'|'appsfolder', matched: ...}). If the app answered with a window that
+    already existed the result says reused_existing_window: true and returns no ref for it unless returnExisting=true."""
     return _guard(lambda: _j(desk().launch(target, args, wait, returnExisting)))
 
 

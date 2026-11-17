@@ -36,16 +36,14 @@ def machine_lock():
 
 @pytest.fixture(autouse=True)
 def clean_state():
-    stop = Path(_state) / "STOP"
-    if stop.exists():
-        stop.unlink()
-    alive = Path(_state) / "approver.alive"
-    if alive.exists():
-        alive.unlink()
+    files = [Path(_state) / n for n in ("STOP", "approver.alive", "task_active.json", "RELEASE", "screen_view.json", "owner_took_over.json")]
+    for f in files:
+        if f.exists():
+            f.unlink()
     os.environ["TURBO_DESKTOP_PRESET"] = "easy"
     os.environ.pop("TURBO_DESKTOP_APPROVAL", None)
     yield
-    for f in (stop, alive):
+    for f in files:
         if f.exists():
             f.unlink()
 
