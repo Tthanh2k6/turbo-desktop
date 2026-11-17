@@ -246,7 +246,14 @@ object Graph {
         when (ev.type) {
             "task_started" -> { taskRunning.value = true; taskUsage.value = null }
             "usage" -> taskUsage.value = Usage.from(j.optJSONObject("usage"))
-            "task_finished" -> { taskRunning.value = false; j.optJSONObject("usage")?.let { u -> Usage.from(u).let { if (it.input + it.output > 0) taskUsage.value = it } } }
+            // one branch only: Kotlin `when` stops at the first match, a second "task_finished" branch never ran
+            "task_finished" -> {
+                taskRunning.value = false
+                j.optJSONObject("usage")?.let { u -> Usage.from(u).let { if (it.input + it.output > 0) taskUsage.value = it } }
+                j.optJSONObject("session_usage")?.let { sessionUsage.value = Usage.from(it) }
+                j.optJSONObject("day_usage")?.let { dayUsage.value = Usage.from(it) }
+                refreshTasks()
+            }
             "approval_request" -> {
                 val a = Approval(j.getString("approval_id"), j.optString("tool"), j.optString("window"),
                     j.optString("control"), j.optString("action"),
@@ -261,7 +268,6 @@ object Graph {
             "input_lock" -> inputLocked.value = j.optBoolean("locked")
             "indicator" -> indicator.value = j.optString("state", "idle")
             "taken_over" -> { paused.value = true; inputLocked.value = false }
-            "task_finished" -> { sessionUsage.value = Usage.from(j.optJSONObject("session_usage")); dayUsage.value = Usage.from(j.optJSONObject("day_usage")); refreshTasks() }
             "hub_alert" -> Notifier.showAlert(app, ev.line(app))
         }
     }

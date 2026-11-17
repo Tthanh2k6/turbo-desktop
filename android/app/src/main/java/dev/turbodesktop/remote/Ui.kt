@@ -328,7 +328,7 @@ fun Main(activity: FragmentActivity, nowSec: Long, expSec: Long, onUnpair: () ->
         else -> Modifier
     }
     val wantedTab by Graph.requestTab.collectAsState()
-    LaunchedEffect(wantedTab) { wantedTab?.let { n -> Tab.entries.firstOrNull { it.name == n }?.let { tab = it } } }
+    LaunchedEffect(wantedTab) { wantedTab?.let { n -> Tab.entries.firstOrNull { it.name == n }?.let { tab = it }; Graph.requestTab.value = null } }
     LaunchedEffect(Unit) { Graph.refreshTasks() }
     Box(Modifier.fillMaxSize().then(frame).testTag("frame_$indicator")) {
         Column(Modifier.fillMaxSize()) {
@@ -399,7 +399,7 @@ fun TasksTab(activity: FragmentActivity, nowSec: Long, expSec: Long) {
         Text(stringResource(R.string.home_hint), color = Pal.TX3, fontSize = 13.sp)
         if (status.isNotBlank()) Text(status, color = Pal.AMBER, fontSize = 14.sp, modifier = Modifier.testTag("status"))
         PrimaryButton(stringResource(R.string.home_send), Modifier.testTag("sendTask")) {
-            if (text.isNotBlank()) scope.launch { if (Graph.sendTask(text.trim())) { text = ""; Graph.refreshTasks() } }
+            if (text.isNotBlank()) scope.launch { if (Graph.sendTask(text.trim())) { text = ""; Graph.refreshTasks(); Graph.requestTab.value = "LIVE" } }
         }
         Text(stringResource(R.string.home_recent), color = Pal.TX2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         tasks.take(8).forEach { t ->
@@ -434,7 +434,7 @@ fun LiveTab() {
             items(shown.reversed()) { e ->
                 Row {
                     Text(java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date((e.json.optDouble("ts") * 1000).toLong())), color = Pal.TX3, fontSize = 12.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(end = 10.dp, top = 2.dp))
-                    Text(e.line(ctx).take(220), color = if (e.type == "hub_alert") Pal.RED else Pal.TX, fontSize = 14.sp)
+                    Text(e.line(ctx).let { if (e.type == "final") it else it.take(220) }, color = if (e.type == "hub_alert") Pal.RED else Pal.TX, fontSize = 14.sp)
                 }
             }
         }
