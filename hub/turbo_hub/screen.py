@@ -163,3 +163,20 @@ def capture_screen_jpeg(
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=q, subsampling=0)
     return buf.getvalue(), redacted
+
+
+def demo_frame() -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """Synthetic 1600x900 desktop for the fake runner (emulator demos): a calculator-like window, no real pixels."""
+    from PIL import ImageDraw
+    img = Image.new("RGB", (1600, 900), (32, 40, 58))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 860, 1600, 900), fill=(20, 22, 28))                     # taskbar
+    d.rounded_rectangle((520, 140, 1080, 780), 14, fill=(243, 243, 243))   # app window
+    d.rectangle((520, 140, 1080, 180), fill=(230, 230, 230))
+    d.text((540, 152), "Calculator", fill=(40, 40, 40))
+    d.text((1000, 230), "58.5", fill=(20, 20, 20))
+    for r in range(5):
+        for c in range(4):
+            x, y = 545 + c * 130, 330 + r * 85
+            d.rounded_rectangle((x, y, x + 115, y + 70), 8, fill=(250, 250, 250) if r else (225, 225, 225))
+    return img, (0, 0, 1600, 900)

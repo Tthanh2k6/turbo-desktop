@@ -282,6 +282,9 @@ def main(argv: list[str] | None = None) -> None:
         public = a.public_url or next((urls[c] for c in conns if c in urls and c != "local"), urls["local"])
         settings = build_settings(cfg, dd, a.runner, public, a.port, a.mcp_config)
         settings.urls = tuple((c, urls[c]) for c in conns if c in urls)
+        if a.runner == "fake":   # demos/screenshots must never stream the real desktop
+            from .screen import demo_frame
+            settings.screen_grabber = demo_frame
         if a.public_url:   # explicit override, e.g. the emulator's 10.0.2.2
             settings.urls = (("local", a.public_url),) + tuple(x for x in settings.urls if x[0] != "local")
         app = create_app(settings)
