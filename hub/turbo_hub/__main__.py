@@ -235,7 +235,8 @@ def main(argv: list[str] | None = None) -> None:
         urls["local"] = f"http://127.0.0.1:{a.port}"
         if "cloudflare" in conns and cfg["cloudflare"].get("url"):
             urls["cloudflare"] = cfg["cloudflare"]["url"].rstrip("/")
-        public = a.public_url or next((urls[c] for c in conns if c in urls), urls["local"])
+        # a phone can never use 127.0.0.1: prefer the first enabled non-local path for the pairing QR
+        public = a.public_url or next((urls[c] for c in conns if c in urls and c != "local"), urls["local"])
         settings = build_settings(cfg, dd, a.runner, public, a.port, a.mcp_config)
         settings.urls = tuple((c, urls[c]) for c in conns if c in urls)
         if a.public_url:   # explicit override, e.g. the emulator's 10.0.2.2
