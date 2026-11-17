@@ -47,3 +47,16 @@ Tasks that could not be run safely or at all on this PC are listed in `FIELD_REP
 - Explorer window with 200 files (field task 5): 4 tool calls, about 2,300 tokens of tool results, 16 s, correct. The listing is long because the list is not virtualised in Explorer's UIA tree; `query=` or `maxChars` cuts it. This is the largest single result measured.
 - Real-input steps now add the lock (hook install about 20 ms) and the glow; not measured end to end because the end-to-end run (`tests/field/e2e_glow.py`) could not take the machine lock.
 - The numbers in sections A to C did not change.
+
+## F. Update 17/11 evening
+
+Real-input field runs (Sonnet through `claude -p`):
+
+| Task | Tool calls (incl. ToolSearch) | Tool-result tokens (est.) | Wall | Result |
+| :--- | ---: | ---: | ---: | :--- |
+| Ctrl+S on the editor, read the Save As dialog | 11 to 14 | ~1,500 to 1,660 | 32 to 44 s | pass |
+| Ctrl+S after another window took focus | 10 | ~520 | 24 s | pass, focus change reported |
+| OCR read and click on a custom-drawn window | 8 | ~340 | 25 s | pass |
+| Real typing with UniKey running | 5 | ~120 | 22 s | pass |
+
+The Save As dialog is the largest result (about 1,500 tokens) because a common file dialog exposes a full folder tree; `query=` or `maxChars` would cut it. The end-to-end run with edge screenshots and the three suite repeats are not measured (see FIELD_REPORT.md).

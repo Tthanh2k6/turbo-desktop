@@ -80,3 +80,32 @@ Field tasks against FIELD_TASKS.md 1 to 30:
 - **Not run because the machine lock was held by the main session:** 20, OCR click (cv), 18, 30 with the lock (30L), 4, 22, 6.
 - **Not run for other reasons:** 26 (one monitor, 100% DPI); 1, 2, 3, 6 (as written), 7, 9 to 16, 23, 24 (as written) because they would need Notepad without a clean launch, the owner's open Settings window, apps not installed, or an elevated prompt.
 - **Automated tests:** last full run before the third round: 116 passed, 2 skipped. New tests since then (`test_modal.py`, hard-kill) are not part of a completed run. The three consecutive full runs the stress check asks for were not done. No flaky test was observed in the three full runs I did complete earlier (each 84 to 116 passed), but that is not the requested stress check.
+
+## Fourth round (17/11 evening): real-input tasks with the owner away, and the secrets zone
+
+Real-input tasks ran whenever the owner was idle for 2 minutes and the machine lock was free.
+
+| Task | Result |
+| :--- | :--- |
+| 21k Ctrl+S on the editor fixture (rerun after `[STAThread]`) | **pass**: Save As dialog listed, controls read (file name, type, Save/Cancel, folder tree), cancelled with Esc, app closed |
+| 20 Ctrl+S after another window took the focus | **pass**: the result carried `focus: "the window was not in front (front was '...'); brought it to the front first"`, dialog opened |
+| cv OCR click on the custom-drawn canvas | **pass**: window read via screenshot + OCR (`treeEmpty`), click on the "Save" OCR ref changed the title to "TurboCanvas clicked" |
+| 18 real typing with UniKey running | **pass, with a caveat**: `send_text "doodle aa dd"` read back exactly; no double diacritics appeared. UniKeyNT was running but its Telex state is unknown (or it ignores injected key events), so the IME-transformation case is not proven either way. The read-back check would have reported a mismatch |
+| 30L STOP during a batch with real input and the input lock | `skipped-busy` |
+| 4 and 22 Explorer create/rename and context menu | `skipped-busy` |
+
+New findings:
+
+11. **`{{Esc}}` crashed `press_keys` with a raw `TypeError: ord() expected a character` (tasks 20, 21k).** My prompt used template-style double braces and the model sent them as written. Fix: double braces are read as single (`{{Esc}}` = `{Esc}`, noted in the result) and any other bad key syntax returns a clear `invalid keys` error. Regression: `test_normalize_keys_accepts_double_braces`. The runner prompts had the same typo and were corrected.
+12. **Task 20: the tool brought the right window to the front silently, so the model could not tell.** The result now says when the window was not in front and what was. Verified in the field run above.
+13. **The field runner held the shared lock while it waited for the owner to leave, and the hub agent's back-to-back runs starved it in return.** Now the runner waits for the owner first without any lock, then takes the lock for one task at a time (`run_field.py` main loop). The starvation from the other side is not solved by the lock alone: polling every 10 to 30 s loses to a process that re-takes it at once. A fair queue (a `.waiting` file) would fix it; not built.
+14. **Secrets deny zone (hard floor, in code, every preset).** After the hub run at 12:27 returned the owner's `.env - Notepad` window to an agent: titles matching `.env`, `secret(s)`, `credentials`, `.pem`, `.key`, `id_rsa`, `.kdbx`, `token`, `password`, `mật khẩu`, `api key`, and password-manager apps are listed as "[hidden: secret window]" and every inspect/screenshot/OCR/read/act returns `{denied: "secret-window", rule: "secret-window"}` with no contents and no title in the message. Users can add patterns, not remove built-ins. While writing its test I found the first version leaked the matched pattern in `windows_list`; fixed. Tests: `tests/test_secrets.py` (27, including a fixture window titled `.env - Notepad`, through the MCP functions, and all three presets). Known false positives: any title containing "token" or "password", by design.
+15. **`launch_app` could hand back a window that already existed.** Now only windows that did not exist before the call are returned. If the app answered with an existing window (single-instance apps) the result says `reused_existing_window: true` with no ref unless `returnExisting=true`. Tests with a faked launch.
+
+My own mistake during the secrets work: an early draft of a test called `inspect` with an id from a different Desktop object and read one owner window (read-only, nothing printed or stored) before I changed it to `process:turbo_editor`.
+
+## Final counts
+
+- **Field tasks 1 to 30:** 15 run, 14 pass, 1 fail (task 21 via menu `Invoke`: a real UIA limit, now reported at once instead of hanging, with a documented workaround). Not run because the lock or the owner was in the way: 30L, 4, 22, task 6, and `e2e_glow.py` (the `claude -p` real-input end-to-end with edge screenshots; the script is ready and skips itself unless the owner has been idle for 2 minutes). Not run for other reasons: 26 (one monitor at 100%), 1, 2, 3, 7, 9 to 16, 23, 24 as written (Notepad without a clean launch, the owner's Settings window, apps not installed, an elevated prompt).
+- **Automated tests:** last full run 116 passed, 6 skipped (the skips are live hook tests that need the owner away and the opt-in real-input tests); `tests/test_secrets.py` 27 passed in a separate run afterwards; `test_modal.py` passed inside the full run. **The three consecutive full runs for the stress check were not done**: each full run takes about 4 to 6 minutes of the shared lock and the hub agent kept it. Across the runs that did complete I saw no flaky failure apart from the ones already fixed (owner keystrokes, foreground checks).
+- To finish: with the lock free and the owner away, run `python tests/field/run_field.py 30L 4 22`, `python tests/field/e2e_glow.py`, then `python -m pytest` three times.

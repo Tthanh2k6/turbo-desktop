@@ -43,6 +43,10 @@ easy = "real_input"
 balanced = "real_input"
 strict = "whole_task"
 
+# Secrets deny zone (hard floor, in code): windows whose title looks like a secret (.env, secret, credentials, .pem,
+# .key, id_rsa, .kdbx, token, password, mật khẩu, api key) and password managers show as "[hidden: secret window]" and are
+# never read, captured or acted on. You may ADD patterns in turbo-desktop.toml: [desktop.secrets] patterns = ["payroll"].
+
 [indicator]
 # While the AI acts, the edges of every screen glow (orange frame, gentle pulse) from its first action until 3 s after
 # the last one. While your keyboard/mouse is locked or real input is being sent, the frame is solid and brighter and

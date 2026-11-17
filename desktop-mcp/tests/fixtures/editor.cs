@@ -14,7 +14,9 @@ class Editor : Form {
   protected override bool ShowWithoutActivation { get { return true; } }
   [STAThread] static void Main(string[] args) { if (Array.IndexOf(args, "--accept-keys") < 0) Application.AddMessageFilter(new KeyBlocker());  Application.EnableVisualStyles(); Application.Run(new Editor()); }
   public Editor() {
-    Text = "TurboEditor - Untitled"; Width = 600; Height = 400;
+    Text = "TurboEditor - Untitled";
+    var cmd = Environment.GetCommandLineArgs();
+    for (int i = 1; i < cmd.Length - 1; i++) if (cmd[i] == "--title") Text = cmd[i + 1]; Width = 600; Height = 400;
     StartPosition = FormStartPosition.Manual; Location = new Point(80, 80);
     var ms = new MenuStrip();
     var file = new ToolStripMenuItem("File");

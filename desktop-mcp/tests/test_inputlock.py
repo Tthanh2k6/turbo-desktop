@@ -83,7 +83,7 @@ def test_mode_per_preset_and_user_override():
 
 # ---------------------------------------------------------------- live hook tests (owner must be away)
 
-needs_idle = pytest.mark.skipif(winsys.idle_seconds() < 20, reason="owner is at the PC: a live hook would swallow their input")
+needs_idle = pytest.mark.usefixtures("owner_away")   # evaluated when the test runs, not at collection
 
 
 class INPUT(ctypes.Structure):

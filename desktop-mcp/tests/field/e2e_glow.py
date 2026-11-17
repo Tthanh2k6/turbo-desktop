@@ -48,10 +48,13 @@ def edge_orange(img):
 
 def main():
     from PIL import ImageGrab
+    end_wait = time.time() + float(os.environ.get('FIELD_WAIT_IDLE', '0'))
+    while winsys.idle_seconds() < 120 and time.time() < end_wait:
+        time.sleep(5)
     if winsys.idle_seconds() < 120:
         print(json.dumps({"status": "skipped-busy", "idle": round(winsys.idle_seconds())}))
         return 2
-    locking.acquire("desktop-mcp-e2e")
+    locking.acquire("desktop-mcp-e2e")   # taken only after the idle wait above, so the hub agent can use the lock meanwhile
     state = tempfile.mkdtemp(prefix="e2e-state-")
     env = {"TURBO_DESKTOP_STATE_DIR": state, "TURBO_DESKTOP_PRESET": "easy", "TURBO_DESKTOP_NO_INPUT": "0",
            "TURBO_DESKTOP_IDLE_SECONDS": "5", "TURBO_DESKTOP_REQUIRE_CLEAN": "1", "PYTHONUTF8": "1",

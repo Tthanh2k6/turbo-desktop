@@ -40,6 +40,12 @@ def no_activate_startupinfo():
     return si
 
 
+def normalize_keys(keys: str) -> tuple[str, bool]:
+    """Agents often write {{Esc}} (template escaping) for {Esc}. Accept it and say so."""
+    new = re.sub(r"\{\{(\w+)\}\}", r"{\1}", keys or "")
+    return new, new != (keys or "")
+
+
 class ToolError(Exception):
     def __init__(self, msg, **extra):
         super().__init__(msg)
@@ -90,6 +96,7 @@ class Desktop:
         self.sleep = sleep_fn
         self._own_input_at = 0.0
         self._pending_invokes: dict = {}
+        self._note: dict = {}
         self.lock = InputLock()
         self.indicator = border_mod.Indicator(disabled_by_env=os.environ.get("TURBO_DESKTOP_NO_INDICATOR") == "1")
 
@@ -111,8 +118,13 @@ class Desktop:
             name, el = winsys.process_info(t["pid"])
             w = self._win(t["hwnd"])
             deny = sec.is_denied_window(name, t["title"], t["class"])
-            d = {"id": w.wid, "hwnd": t["hwnd"], "title": t["title"], "process": name, "pid": t["pid"],
-                 "focused": t["hwnd"] == fg}
+            secret = sec.secret_reason(t["title"], name)
+            d = {"id": w.wid, "hwnd": t["hwnd"], "title": sec.HIDDEN_TITLE if secret else t["title"], "process": name,
+                 "pid": t["pid"], "focused": t["hwnd"] == fg}
+            if secret:
+                d["secret"] = True            # the matched pattern is not shown: it would hint at what the title was
+                d["rule"] = "secret-window"
+                deny = "secret-window"
             if el:
                 d["elevated"] = True
                 d["actionable"] = False
@@ -151,6 +163,9 @@ class Desktop:
                                 "(window_control close, or press_keys {Esc} on the dialog); use the keyboard accelerator "
                                 "instead of Invoke for menu items that open dialogs.", blocked=True)
             self._pending_invokes.pop(d.get("pid"), None)
+        if d.get("secret"):
+            self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, rule="secret-window")
+            raise ToolError("secret window: its contents are never read or acted on", denied="secret-window", rule="secret-window")
         if d.get("denied"):
             self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, reason=d["denied"])
             raise ToolError(d["denied"], denied=True)
@@ -520,6 +535,12 @@ class Desktop:
         return win32gui.GetForegroundWindow() == hwnd
 
     def _front_or_fail(self, d):
+        before = win32gui.GetForegroundWindow()
+        if before != d["hwnd"]:
+            try:
+                self._note["focus"] = f"the window was not in front (front was '{win32gui.GetWindowText(before)[:50]}'); brought it to the front first"
+            except Exception:
+                self._note["focus"] = "the window was not in front; brought it to the front first"
         if not self.bring_front(d["hwnd"]):
             raise ToolError(f"window '{d['title']}' could not be brought to the front; no input was sent "
                             f"(another window kept the focus)", focus_lost=True)
@@ -566,6 +587,7 @@ class Desktop:
     def act(self, window, action="click", ref=None, name=None, role=None, text=None, value=None, keys=None,
             direction=None, amount=1):
         self._ind_activity()
+        self._note = {}
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
         self._guard_window(d, action, uia=not (action == "press_keys" and not ref and not name))
         if action == "press_keys" and not ref and not name:   # keys for the window itself (shortcuts like Ctrl+S)
@@ -601,7 +623,7 @@ class Desktop:
         except Exception as e:
             self.audit.write(event="action", ok=False, error=f"{type(e).__name__}: {e}", approval_id=approval, **base)
             raise ToolError(f"{type(e).__name__}: {_clip(str(e), 120)}")
-        res = {"ok": True, "via": via, **extra}
+        res = {"ok": True, "via": via, **extra, **self._note}
         if approval:
             res["approvalId"] = approval
             res["after"] = self._thumb(d, c, "after")
@@ -771,6 +793,9 @@ class Desktop:
         if action == "press_keys":
             if not keys:
                 raise ToolError("need keys= (uiautomation SendKeys syntax, e.g. '{Ctrl}s')")
+            keys, fixed = normalize_keys(keys)
+            if fixed:
+                self._note["keys"] = "read {{X}} as {X}"
             def go():
                 self._front_or_fail(d)
                 if c is not None:
@@ -778,7 +803,10 @@ class Desktop:
                         c.SetFocus()
                     except Exception:
                         pass
-                auto.SendKeys(keys, waitTime=0.02)
+                try:
+                    auto.SendKeys(keys, waitTime=0.02)
+                except (TypeError, ValueError) as e:
+                    raise ToolError(f"invalid keys {keys!r}: {e}. Syntax: '{{Ctrl}}s', '{{Esc}}', '{{Enter}}', plain text.")
             self.real_input(go)
             return "input", {}
         raise ToolError(f"unknown action '{action}'")
@@ -962,7 +990,7 @@ class Desktop:
             return [path, "--new-window", str(d)], f"--new-window on temp folder {d}"
         return None
 
-    def launch(self, target: str, args: str = "", wait=8.0) -> dict:
+    def launch(self, target: str, args: str = "", wait=8.0, return_existing: bool = False) -> dict:
         self._ind_activity()
         t = APP_ALIASES.get(target.lower(), target)
         exe_name = Path(t).stem.lower()
@@ -993,7 +1021,8 @@ class Desktop:
             ok, aid = sec.request_approval(self.audit, {**base, "reason": cls.reason, "rule": cls.rule})
             if not ok:
                 raise ToolError(f"approval denied or timed out: {cls.reason}", approval="deny", rule=cls.rule)
-        before = {d["hwnd"] for d in self.windows_list()}
+        before_list = self.windows_list()
+        before = {d["hwnd"] for d in before_list}
         try:
             subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
         except OSError as e:
@@ -1009,7 +1038,18 @@ class Desktop:
                 break
         for d in new:
             self.launched.add(d["hwnd"])
-        self.audit.write(event="action", ok=bool(new), via="launch", new_windows=[d["title"] for d in new], **base)
+        if not new:
+            # Single-instance apps (Win11 Notepad, Explorer, Settings) may answer with a window that already existed.
+            # Never hand that back by default: it can hold the owner's documents.
+            now = self.windows_list()
+            reused = [d for d in now if d["hwnd"] in before and (d["process"].lower() == exe_name or d["focused"])]
+            reused = [d for d in reused if d["process"].lower() == exe_name or (
+                d["focused"] and d["hwnd"] not in {b["hwnd"] for b in before_list if b.get("focused")})]
+            if reused:
+                extra = {**extra, "reused_existing_window": True}
+                if return_existing:
+                    new = reused
+        self.audit.write(event="action", ok=bool(new) or bool(extra.get("reused_existing_window")), via="launch", new_windows=[d["title"] for d in new], **base)
         return {"ok": True, **extra, "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new]}
 
     def close_launched(self):

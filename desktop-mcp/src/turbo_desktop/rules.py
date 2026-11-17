@@ -32,6 +32,7 @@ class RuleSet:
     allowlist: set = field(default_factory=set)
     session_restore: set = field(default_factory=set)
     indicator: dict = field(default_factory=lambda: {"border": True, "color": "#E0461D"})
+    secret_patterns: list = field(default_factory=list)
     input_lock: dict = field(default_factory=lambda: {"mode": "real_input", "max_seconds": 60})
     source: str = ""
 
@@ -88,6 +89,7 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
         mode = il_def.get("mode", {}).get(chosen, "real_input")
     secs = il_user.get("max_seconds", il_def.get("max_seconds", 60))
     rs = RuleSet(chosen, rules, allow, sr)
+    rs.secret_patterns = [str(x) for x in section.get("secrets", {}).get("patterns", [])]   # additions only
     ind_def, ind_user = default.get("indicator", {}), section.get("indicator", {})
     rs.indicator = {"border": bool(ind_user.get("border", ind_def.get("border", True))),
                     "color": str(ind_user.get("color", ind_def.get("color", "#E0461D")))}

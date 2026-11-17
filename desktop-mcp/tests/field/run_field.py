@@ -52,11 +52,11 @@ TASKS = {
     "21": dict(prompt=f"Open the app at {ed}. Use its File menu to choose 'Save As...'. A Save dialog should appear: report its title and the names of its main controls. "
                       "Then cancel the dialog and close the app.", kill="turbo_editor"),
     "20": dict(prompt=f"Open the editor app at {ed} with launch_app args '--accept-keys'. Then open the app at {fx} (this one takes the keyboard focus). "
-                      "Now, with the editor window as your target, press Ctrl+S (press_keys with '{{Ctrl}}s'). A 'Save As' dialog should appear from the editor. "
-                      "Report: did the tool notice that the editor was not in front, and did the dialog open? Cancel the dialog with press_keys '{{Esc}}' and close both apps.",
+                      "Now, with the editor window as your target, press Ctrl+S (press_keys with '{Ctrl}s'). A 'Save As' dialog should appear from the editor. "
+                      "Report: did the tool notice that the editor was not in front, and did the dialog open? Cancel the dialog with press_keys '{Esc}' and close both apps.",
                needs_input=True),
     "21k": dict(prompt=f"Open the app at {ed} with launch_app args '--accept-keys'. Set its text to 'hello'. Press Ctrl+S with press_keys ('{{Ctrl}}s') to open its Save As dialog. "
-                       "Report the dialog's title and the names of its main controls, then cancel it with press_keys '{{Esc}}' and close the app.", needs_input=True),
+                       "Report the dialog's title and the names of its main controls, then cancel it with press_keys '{Esc}' and close the app.", needs_input=True),
     "18": dict(prompt=f"Open the app at {fx} with launch_app args '--accept-keys'. Use act action send_text to type the text 'doodle aa dd' into the field 'Full name' "
                       "(real keyboard typing). Report exactly what the tool said and what the field holds afterwards. Do not try to work around anything, just report. Close the app.",
                needs_input=True, note="UniKeyNT is running on this PC; Telex turns oo/aa/dd into diacritics"),
@@ -70,7 +70,7 @@ TASKS = {
                       "(press_keys '{Apps}' or shift+F10 after focusing the file list) and report the first 8 menu entries. Then close the menu with press_keys '{Esc}' and close the Explorer window. "
                       "Do not click any menu entry.", needs_input=True, setup="explorer-a"),
     "30L": dict(prompt=f"Open the app at {fx} with launch_app args '--accept-keys'. Using ONE batch_actions call run in order: act press_keys '{{Tab}}' on the window (real input); "
-                       "wait_for the text 'Zzz never' with timeout 25; act press_keys '{{Tab}}'. Report exactly what the batch returned. Close the app.",
+                       "wait_for the text 'Zzz never' with timeout 25; act press_keys '{Tab}'. Report exactly what the batch returned. Close the app.",
                 needs_input=True, note="STOP file is created 14 s into the run; input lock must be released"),
     "4o": dict(prompt="Open a NEW File Explorer window on the folder {tmp} (launch_app explorer with args). Report the window title and the names of the first 5 items "
                      "in the file list. Do not change anything. Close that Explorer window at the end.", explorer=True),
@@ -100,22 +100,26 @@ def _setup(name):
     return str(root)
 
 
+def _owner_away(wait=True, need=120.0):
+    """True when the owner has been idle for `need` seconds; waits up to FIELD_WAIT_IDLE seconds (without any lock held)."""
+    import turbo_desktop.winsys as ws
+    end = time.time() + (float(os.environ.get("FIELD_WAIT_IDLE", "300")) if wait else 0)
+    while ws.idle_seconds() < need and time.time() < end:
+        time.sleep(5)
+    return ws.idle_seconds() >= need
+
+
 def run(tid):
     t = TASKS[tid]
     if refuses(t):
         res = {"task": tid, "status": "refused-session-restore"}
         _log(res)
         return res
-    if t.get("needs_input"):
+    if t.get("needs_input") and not _owner_away(wait=False, need=20.0):  # main loop already waited for 120 s
         import turbo_desktop.winsys as ws
-        end = time.time() + float(os.environ.get("FIELD_WAIT_IDLE", "300"))  # wait for the owner to be away, up to 5 min
-        while ws.idle_seconds() < 120 and time.time() < end:
-            time.sleep(5)
-        if ws.idle_seconds() < 120:
-            res = {"task": tid, "status": "skipped-busy", "idle": round(ws.idle_seconds())}
-            _log(res)
-            return res
-    _PRE["calc"] = _pids("CalculatorApp.exe")
+        res = {"task": tid, "status": "skipped-busy", "idle": round(ws.idle_seconds())}
+        _log(res)
+        return res
     state = tempfile.mkdtemp(prefix="field-state-", dir=OUT)
     work = OUT / "work"
     work.mkdir(exist_ok=True)
@@ -202,9 +206,11 @@ def _log(res):
 if __name__ == "__main__":
     sys.path.insert(0, str(ROOT / "tests"))
     import locking
-    locking.acquire("desktop-mcp-field")
-    try:
-        for tid in sys.argv[1:]:
+    for tid in sys.argv[1:]:
+        if TASKS.get(tid, {}).get("needs_input"):
+            _owner_away(wait=True)          # wait for the owner to be away first, without holding the shared lock
+        locking.acquire("desktop-mcp-field")   # hold the machine lock for this one task only
+        try:
             run(tid)
-    finally:
-        locking.release()
+        finally:
+            locking.release()

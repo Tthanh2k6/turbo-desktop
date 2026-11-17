@@ -85,3 +85,11 @@ def launch_app(desktop):
             p.kill()
         except Exception:
             pass
+
+
+@pytest.fixture
+def owner_away():
+    """Live hook tests swallow physical input for a moment: only run them when the owner has been idle for 20 s."""
+    from turbo_desktop import winsys
+    if winsys.idle_seconds() < 20:
+        pytest.skip("owner is at the PC (idle %.0f s): a live input hook would swallow their input" % winsys.idle_seconds())

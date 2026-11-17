@@ -108,6 +108,12 @@ color = "#E0461D"
 ```
 
 
+## Secret windows (always on)
+
+A window whose title or document name looks like a secret (`.env`, `secret(s)`, `credentials`, `.pem`, `.key`, `id_rsa`, `.kdbx`, `token`, `password`, `mật khẩu`, `api key`) and any password-manager app is a deny zone in every preset. `windows_list` still lists it, but with the title "[hidden: secret window]". `inspect_compact`, `screenshot`, OCR, `read` and every `act` on it return `{"denied": "secret-window", "rule": "secret-window"}` with no contents, and the message never repeats the title. You can add your own patterns (`[desktop.secrets] patterns = ["payroll"]`), but the built-in ones cannot be removed or switched off.
+
+`launch_app` returns only windows that did not exist before the call. If an app answers with a window that was already open (Windows 11 Notepad and Explorer do this), the result says `reused_existing_window: true` and gives no ref for it, unless you pass `returnExisting=true`.
+
 ## Editing the rules
 
 The rules are data: `rules/default_rules.toml` (read the comments at its top). Each rule has an `id`, a `level` (`allow`, `ask`, `deny`) and matchers (process, window title, control name in Vietnamese and English, role, action, ...). The first match wins. A refusal or question always names the rule: `{"rule": "payment", ...}`.
@@ -155,4 +161,4 @@ Tests only touch windows they start themselves (`tests/fixtures/*.exe`, built fr
 
 ## Known limits
 
-See `BENCH.md` and `FIELD_REPORT.md`. In short: custom-drawn controls only get OCR (slow, no values); programs started elevated cannot be driven; apps that reopen your previous files on launch (Windows 11 Notepad, Edge, Chrome, VS Code, Word, Excel; list in `[apps.session_restore]`) make those contents visible to the AI: Easy warns, Balanced asks, Strict asks and uses a clean launch for Notepad (new temp file) and VS Code (`--new-window` on a temp folder); UIA Invoke on an item that opens a modal dialog can raise a COM error even though it worked.
+See `BENCH.md` and `FIELD_REPORT.md`. In short: custom-drawn controls only get OCR (slow, no values); programs started elevated cannot be driven; apps that reopen your previous files on launch (Windows 11 Notepad, Edge, Chrome, VS Code, Word, Excel; list in `[apps.session_restore]`) make those contents visible to the AI: Easy warns, Balanced asks, Strict asks and uses a clean launch for Notepad (new temp file) and VS Code (`--new-window` on a temp folder); UIA `Invoke` on a menu item that opens a modal dialog returns `pending: true` and then every UI Automation call into that app blocks until the dialog is closed; the tool reports `blocked: true` at once and the dialog can be closed with `window_control close` or `press_keys {Esc}` on it (prefer the menu's keyboard accelerator, e.g. Ctrl+S, over `Invoke` for such items). A UIA call into a hung app times out after 40 s (`TURBO_DESKTOP_CALL_TIMEOUT`) and the server carries on with a fresh worker thread.

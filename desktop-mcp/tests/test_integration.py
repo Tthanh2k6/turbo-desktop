@@ -179,3 +179,11 @@ def test_press_keys_without_target_goes_to_the_window(launch_app, desktop):
     d = launch_app("turbo_fixture.exe")
     with pytest.raises(ToolError, match="real input disabled"):
         desktop.act(d["id"], "press_keys", keys="{Ctrl}s")
+
+
+def test_normalize_keys_accepts_double_braces():
+    from turbo_desktop.engine import normalize_keys
+    assert normalize_keys("{{Ctrl}}s") == ("{Ctrl}s", True)
+    assert normalize_keys("{{Esc}}") == ("{Esc}", True)
+    assert normalize_keys("{Ctrl}s") == ("{Ctrl}s", False)
+    assert normalize_keys("abc") == ("abc", False)

@@ -35,6 +35,37 @@ def stop_requested() -> bool:
     return (state_dir() / "STOP").exists()
 
 
+# ---------------------------------------------------------------- secrets deny zone (hard floor, in code)
+
+SECRET_TITLE_PATTERNS = [
+    r"\.env(\.|\b)", r"secrets?", r"credentials", r"\.pem\b", r"\.key\b", r"id_rsa", r"\.kdbx", r"token",
+    r"password", r"mật khẩu", r"api[_-]?key",
+]
+SECRET_PROCESSES = {"bitwarden", "keepass", "keepassxc", "1password", "lastpass", "dashlane", "nordpass", "roboform",
+                    "enpass", "protonpass"}
+HIDDEN_TITLE = "[hidden: secret window]"
+
+
+def secret_reason(title: str | None, process: str | None = None) -> str | None:
+    """Window titles / document names that look like secrets, and password-manager apps. The built-in patterns are code:
+    users can ADD patterns ([desktop.secrets] patterns = [...]) but not remove these."""
+    p = (process or "").lower().removesuffix(".exe")
+    if p in SECRET_PROCESSES:
+        return "password manager"
+    extra = []
+    try:
+        extra = list(_rules.load_ruleset().secret_patterns)
+    except Exception:
+        pass
+    for pat in SECRET_TITLE_PATTERNS + extra:
+        try:
+            if title and re.search(pat, title, re.I):
+                return f"title matches '{pat}'"
+        except re.error:
+            continue
+    return None
+
+
 # ---------------------------------------------------------------- classification (data in rules/*.toml)
 
 from . import rules as _rules  # noqa: E402
