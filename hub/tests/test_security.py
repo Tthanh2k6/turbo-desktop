@@ -258,3 +258,73 @@ def test_hub_restart_keeps_session_when_persist_is_on(tmp_path):
     with TestClient(create_app(mk())) as http2:
         d.http = http2
         assert d.request("GET", "/status").status_code == 200
+        # Revoking the device saves sessions.dpapi so a subsequent restart does not resurrect the session
+        tok = {"X-Admin-Token": http2.app.state.hub.store.admin_token}
+        assert http2.delete(f"/admin/devices/{d.device_id}", headers=tok).status_code == 200
+    with TestClient(create_app(mk())) as http3:
+        d.http = http3
+        assert d.request("GET", "/status").status_code == 401
+
+
+def test_events_stream_stops_when_session_revoked(tmp_path):
+    import asyncio
+    import httpx
+    with Env(tmp_path) as env:
+        d = env.session_client()
+        hdr = d._headers("GET", "/events?since=0", b"")
+
+        async def go():
+            yielded = []
+            transport = httpx.ASGITransport(app=env.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testclient") as ac:
+                async def revoke_and_emit():
+                    await asyncio.sleep(0.05)
+                    env.hub.sessions.clear()
+                    await env.hub.manager.emit({"type": "text", "text": "secret-after-revoke"})
+
+                asyncio.create_task(revoke_and_emit())
+                async with ac.stream("GET", "/events?since=0", headers=hdr) as resp:
+                    async for line in resp.aiter_lines():
+                        if line:
+                            yielded.append(line)
+            return yielded
+
+        lines = asyncio.run(asyncio.wait_for(go(), 2.0))
+        assert not any("secret-after-revoke" in ln for ln in lines)
+
+
+def test_cf_connecting_ip_trust_and_no_loopback_lockout_from_proxy(tmp_path):
+    with Env(tmp_path) as env:
+        env.settings.connections = ("local", "cloudflare")
+        d = env.paired_client()
+
+        # 1) Proxied request spoofing Cf-Connecting-Ip: 127.0.0.1 or ::1 must never lock out loopback
+        for spoof in ("127.0.0.1", "::1", "testclient"):
+            for _ in range(6):
+                h = d._headers("GET", "/hello", b"")
+                h["X-Sig"] = "AAAA"
+                h["Cf-Connecting-Ip"] = spoof
+                env.http.get("/hello", headers=h)
+        assert not env.hub.locked_until.get("127.0.0.1")
+        assert not env.hub.locked_until.get("::1")
+        assert not env.hub.locked_until.get("testclient")
+        assert env.hub.locked_until.get("proxy:127.0.0.1", 0) > env.clock()   # the spoofer is still locked out
+        assert d.request("GET", "/hello").status_code == 200
+
+        # 2) Valid remote IP in Cf-Connecting-Ip from loopback peer with cloudflare enabled IS locked out after 5 strikes
+        for _ in range(5):
+            h = d._headers("GET", "/hello", b"")
+            h["X-Sig"] = "AAAA"
+            h["Cf-Connecting-Ip"] = "198.51.100.42"
+            env.http.get("/hello", headers=h)
+        assert env.hub.locked_until.get("198.51.100.42", 0) > env.clock()
+        assert d.request("GET", "/hello").status_code == 200  # local peer still not locked out
+
+        # 3) Non-loopback peer cannot spoof Cf-Connecting-Ip to evade lockout
+        env.settings.loopback_hosts = ("127.0.0.1",)  # "testclient" is now treated as a non-loopback peer
+        for i in range(5):
+            h = d._headers("GET", "/hello", b"")
+            h["X-Sig"] = "AAAA"
+            h["Cf-Connecting-Ip"] = f"203.0.113.{i + 1}"
+            env.http.get("/hello", headers=h)
+        assert env.hub.locked_until.get("testclient", 0) > env.clock()

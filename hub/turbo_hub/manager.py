@@ -42,6 +42,7 @@ class Task:
     usage: dict = field(default_factory=lambda: _blank_usage())
     live: dict = field(default_factory=dict)   # message id -> usage seen so far (deduplicated)
     apps: list[str] = field(default_factory=list)
+    answer: str = ""
 
 
 class TaskManager:
@@ -155,6 +156,8 @@ class TaskManager:
                 total = {k: sum(u.get(k, 0) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
                 await self.emit({"type": "usage", "task_id": task.id, "usage": total})
                 return
+            if ev["type"] == "final" and ev.get("text") is not None:
+                task.answer = str(ev["text"])[:2000]
             await self.emit(ev)
             if ev["type"] == "final" and ev.get("usage"):
                 self.record_usage(task, ev["usage"])
@@ -177,6 +180,10 @@ class TaskManager:
                 task.status = "stopped" if self.stopped else status
             task.finished_at = self.clock()
             self.on_task_end(task)   # release the PC lock first: the report record must never delay or block it
+            if task.usage["tasks"] == 0 and task.live:
+                total = {k: sum(int(u.get(k, 0)) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
+                total["cost_usd"] = round(sum(float(u.get("cost_usd", 0.0)) for u in task.live.values()), 6)
+                self.record_usage(task, total)
             try:
                 self._record_finished_task(task)
             except Exception as exc:  # noqa: BLE001  reporting is best effort
@@ -197,12 +204,14 @@ class TaskManager:
             st = await asyncio.wait_for(self.system_state(), 10) or {}
         except Exception:
             return ["Could not read PC state (system_state unavailable)."]
-        if st.get("locked"):
+        if st.get("sessionLocked") or st.get("secureDesktopActive") or st.get("locked") or st.get("secure_desktop_active"):
             raise PcLocked("The PC is locked. Unlock it first, then send the task again.")
         warns = []
-        if st.get("on_battery") and st.get("battery_percent") is not None and st["battery_percent"] < 20:
-            warns.append(f"PC is on battery at {st['battery_percent']}%.")
-        if st.get("display_off"):
+        on_bat = st.get("onBattery") if st.get("onBattery") is not None else st.get("on_battery")
+        bat_pct = st.get("batteryPercent") if st.get("batteryPercent") is not None else st.get("battery_percent")
+        if on_bat and bat_pct is not None and bat_pct < 20:
+            warns.append(f"PC is on battery at {bat_pct}%.")
+        if st.get("displayOff") or st.get("display_off"):
             warns.append("PC display is off.")
         return warns
 
@@ -252,6 +261,7 @@ class TaskManager:
         rec = {
             "id": task.id,
             "text": task.text[:500],
+            "answer": (task.answer or "")[:2000],
             "start": round(task.started_at, 3),
             "end": round(task.finished_at if task.finished_at is not None else self.clock(), 3),
             "status": task.status,
@@ -265,12 +275,14 @@ class TaskManager:
 
     def history(self, limit: int = 50) -> list[dict]:
         """Recent tasks for the phone: the ones in memory plus finished ones from tasks.jsonl (survives a hub restart)."""
-        out = {t.id: {"id": t.id, "text": t.text, "status": t.status, "startedAt": int(t.started_at),
+        out = {t.id: {"id": t.id, "text": t.text, "answer": (t.answer or "")[:2000], "status": t.status,
+                      "startedAt": int(t.started_at),
                       "finishedAt": int(t.finished_at) if t.finished_at else None} for t in self.tasks.values()}
         for r in self._read_tasks_file():
             rid = r.get("id")
             if isinstance(rid, str) and rid and rid not in out and r.get("text"):
-                out[rid] = {"id": rid, "text": r["text"], "status": r.get("status", "done"),
+                out[rid] = {"id": rid, "text": r["text"], "answer": str(r.get("answer") or "")[:2000],
+                            "status": r.get("status", "done"),
                             "startedAt": int(float(r.get("start") or 0)),
                             "finishedAt": int(float(r["end"])) if r.get("end") else None}
         return sorted(out.values(), key=lambda x: -x["startedAt"])[:limit]
@@ -302,6 +314,8 @@ class TaskManager:
         records = list(by_id.values()) + extra
         tokens_in = 0
         tokens_out = 0
+        cache_read = 0
+        cache_create = 0
         cost_usd = 0.0
         app_counts: dict[str, int] = {}
         app_names: dict[str, str] = {}
@@ -318,6 +332,8 @@ class TaskManager:
             u = r.get("usage") if isinstance(r.get("usage"), dict) else {}
             tokens_in += int(u.get("input", u.get("tokensIn", 0)))
             tokens_out += int(u.get("output", u.get("tokensOut", 0)))
+            cache_read += int(u.get("cache_read", u.get("cacheRead", 0)))
+            cache_create += int(u.get("cache_create", u.get("cacheCreate", 0)))
             cost_usd = round(cost_usd + float(u.get("cost_usd", u.get("costUsd", 0.0))), 6)
             for raw_app in r.get("apps") or []:
                 if isinstance(raw_app, str) and (a := _clean_app_name(raw_app)):
@@ -333,6 +349,8 @@ class TaskManager:
             "seconds": sum(x["seconds"] for x in days_list),
             "tokensIn": tokens_in,
             "tokensOut": tokens_out,
+            "cacheRead": cache_read,
+            "cacheCreate": cache_create,
             "costUsd": cost_usd,
         }
         top_apps = [
@@ -344,6 +362,13 @@ class TaskManager:
     # ------------------------------------------------------------ gate + approvals
     async def gate(self, task_id: str, call: dict, emit=None) -> bool:
         emit = emit or (lambda ev: self.emit({**ev, "task_id": task_id}))
+        inp = call.get("input") if isinstance(call.get("input"), dict) else {}
+        call = {
+            **call,
+            "window": call.get("window") or inp.get("window"),
+            "control": call.get("control") or inp.get("name") or inp.get("ref"),
+            "action": call.get("action") or inp.get("action"),
+        }
         if self.paused and not self.stopped:      # owner took over: hold the agent until the phone resumes
             await self._resume_evt.wait()
         if self.stopped:

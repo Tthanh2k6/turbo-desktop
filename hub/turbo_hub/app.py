@@ -175,14 +175,16 @@ def create_app(settings: Settings) -> FastAPI:
             pid = manager.agent_pid
             if pid != last:
                 last = pid
-                reaper.record(pid_file, pid)
+                await asyncio.to_thread(reaper.record, pid_file, pid)
             await asyncio.sleep(1)
 
     @asynccontextmanager
     async def lifespan(_app):
-        if reaper.reap(pid_file):
+        if await asyncio.to_thread(reaper.reap, pid_file):
             audit.append("agent_reaped", {"why": "leftover agent from a previous hub run"})
-        tasks = [asyncio.create_task(track_agent()), asyncio.create_task(cc.run())] +                 ([asyncio.create_task(bridge.run())] if bridge else [])
+        tasks = [asyncio.create_task(track_agent()), asyncio.create_task(cc.run())]
+        if bridge:
+            tasks.append(asyncio.create_task(bridge.run()))
         try:
             yield
         finally:
@@ -190,7 +192,7 @@ def create_app(settings: Settings) -> FastAPI:
                 t.cancel()
             if manager._runner is not None:
                 await manager._runner.kill()      # clean shutdown never leaves the agent running
-            reaper.record(pid_file, None)
+            await asyncio.to_thread(reaper.record, pid_file, None)
 
     app = FastAPI(title="turbo-desktop hub", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.hub = st
@@ -211,9 +213,26 @@ def create_app(settings: Settings) -> FastAPI:
         return Response(body, status_code=status, media_type="application/json",
                         headers=sign_response(ctx.nonce, ctx.path_qs, status, body))
 
+    def _is_loopback(host: str) -> bool:
+        return host in settings.loopback_hosts or host in ("127.0.0.1", "::1", "localhost")
+
     def source(request: Request) -> str:
         # behind cloudflared the TCP peer is always loopback, the real client is in Cf-Connecting-Ip
-        return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+        peer = request.client.host if request.client else "?"
+        if peer in settings.loopback_hosts and "cloudflare" in settings.connections:
+            cf_ip = (request.headers.get("cf-connecting-ip") or "").strip()
+            if cf_ip and not _is_loopback(cf_ip):
+                return cf_ip
+        return peer
+
+    def client_key(request: Request) -> str:
+        """Lockout bucket. A proxied request without a trusted client IP is counted in a proxy bucket, never against
+        the loopback address the real local phone/CLI uses."""
+        src = source(request)
+        if via_proxy(request) and _is_loopback(src):
+            hdr = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for") or "unknown"
+            return "proxy:" + hdr.split(",")[0].strip()
+        return src
 
     def via_proxy(request: Request) -> bool:
         return any(h in request.headers for h in PROXY_HEADERS)
@@ -225,7 +244,7 @@ def create_app(settings: Settings) -> FastAPI:
                 raise HTTPException(403, "tunnel access is not enabled")
             if settings.require_access_header and "cf-access-jwt-assertion" not in request.headers:
                 raise HTTPException(403, "Cloudflare Access login required")
-        src = source(request)
+        src = client_key(request)
         until = st.locked_until.get(src, 0)
         if until > now():
             raise HTTPException(429, "locked out, try later")
@@ -235,7 +254,7 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(413, "body too large")
 
     def strike(request: Request, why: str) -> None:
-        src, t = source(request), now()
+        src, t = client_key(request), now()
         hits = [x for x in st.strikes.get(src, []) if x > t - LOCK_WINDOW] + [t]
         st.strikes[src] = hits
         if len(hits) >= LOCK_STRIKES:
@@ -374,6 +393,7 @@ def create_app(settings: Settings) -> FastAPI:
         ok = store.remove_device(device_id)
         for sid in [k for k, s in st.sessions.items() if s.device_id == device_id]:
             del st.sessions[sid]
+        save_sessions()
         if ok:
             audit.append("device_revoked", {"device": device_id})
         return ok
@@ -621,21 +641,30 @@ def create_app(settings: Settings) -> FastAPI:
         q = manager.subscribe()
         backlog = manager.events_since(since)
 
+        def session_ok() -> bool:
+            s = st.sessions.get(ctx.session or "")
+            return s is not None and s.exp >= now()
+
         async def gen():
             try:
                 last = since
                 for ev in backlog:
+                    if not session_ok():
+                        return
                     last = ev["seq"]
                     yield sse_frame(ev)
                 while True:
+                    if not session_ok():
+                        return
                     try:
                         ev = await asyncio.wait_for(q.get(), 15)
                     except asyncio.TimeoutError:
-                        yield b": hb\n\n"
-                        s = st.sessions.get(ctx.session or "")
-                        if s is None or s.exp < now() or await request.is_disconnected():
+                        if not session_ok() or await request.is_disconnected():
                             return
+                        yield b": hb\n\n"
                         continue
+                    if not session_ok():
+                        return
                     if ev["seq"] > last:
                         last = ev["seq"]
                         yield sse_frame(ev)
@@ -710,7 +739,14 @@ def create_app(settings: Settings) -> FastAPI:
         if task is None:
             raise HTTPException(409, "no running task")
         data = await request.json()
-        call = {"tool": data.get("tool_name"), "input": data.get("input") or {}}
+        inp = data.get("input") if isinstance(data.get("input"), dict) else {}
+        call = {
+            "tool": data.get("tool_name"),
+            "input": inp,
+            "window": data.get("window") or inp.get("window"),
+            "control": data.get("control") or inp.get("name") or inp.get("ref"),
+            "action": data.get("action") or inp.get("action"),
+        }
         allowed = await manager.gate(task.id, call)
         return {"behavior": "allow", "updatedInput": call["input"]} if allowed else \
                {"behavior": "deny", "message": "Denied by the owner (or timed out / STOP)."}

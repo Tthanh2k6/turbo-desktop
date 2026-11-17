@@ -122,3 +122,32 @@ def test_zoom_crop_keeps_redaction_and_native_pixels(tmp_path):
         env.clock.t += 1
         full = Image.open(io.BytesIO(d.request("GET", "/screen.jpg?w=4000&q=99").content))
         assert full.size == (1920, 960)                     # full frames capped at 1920 px
+
+
+def test_screen_redacts_owner_approval_titles_and_password_manager_processes():
+    windows = [
+        {"title": "Calculator", "rect": (0, 0, 80, 80), "process": "CalculatorApp.exe"},
+        {"title": "Claude Code cần duyệt", "rect": (100, 10, 180, 90), "process": "python.exe"},
+        {"title": "CLAUDE CODE NEEDS APPROVAL", "rect": (200, 10, 280, 90), "process": "python.exe"},
+        {"title": "Turbo-Desktop: Approve Action?", "rect": (300, 10, 380, 90), "process": "python.exe"},
+        {"title": "My Vault", "rect": (10, 120, 90, 200), "process": "C:\\Program Files\\Bitwarden\\Bitwarden.exe"},
+        {"title": "Personal DB", "rect": (110, 120, 190, 200), "process": "keepassxc"},
+        {"title": "Work Vault", "rect": (210, 120, 290, 200), "process": "1Password.exe"},
+        {"title": "Logins", "rect": (310, 120, 390, 200), "process": "protonpass"},
+    ]
+    img, count = screen.redact_image(_fake_frame(400, 300)[0], windows)
+    assert count == 7
+    assert img.getpixel((40, 40)) == (220, 180, 140)
+    for x, y in ((140, 50), (240, 50), (340, 50), (50, 160), (150, 160), (250, 160), (350, 160)):
+        assert img.getpixel((x, y)) == (0, 0, 0)
+    for proc in ("bitwarden", "keepass", "keepassxc", "1password", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "protonpass"):
+        assert screen.is_secret_process(proc)
+        assert screen.is_secret_process(f"C:\\Apps\\{proc}.exe")
+    assert not screen.is_secret_process("explorer.exe")
+
+
+def test_enum_windows_includes_process_name():
+    wins = screen.enum_windows()
+    for w in wins:
+        assert "title" in w and "rect" in w and "process" in w
+        assert isinstance(w["process"], str)

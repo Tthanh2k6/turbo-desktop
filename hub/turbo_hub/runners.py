@@ -246,7 +246,8 @@ class ClaudeRunner:
 
     def __init__(self, hub_url: str, internal_token: str, extra_mcp_config: str | None = None,
                  claude_path: str | None = None, spawn=None, command: list[str] | None = None,
-                 server_env: dict | None = None, system_prompt: str | None = None, model: str | None = None):
+                 server_env: dict | None = None, system_prompt: str | None = None, model: str | None = None,
+                 data_dir: Path | str | None = None):
         self.server_env = server_env or {}
         self.system_prompt, self.model = system_prompt, model
         self.command = command or None
@@ -254,10 +255,23 @@ class ClaudeRunner:
         self.extra_mcp_config = extra_mcp_config
         self.claude_path = claude_path or find_claude()
         self.spawn = spawn or _spawn_real
+        self.data_dir = Path(data_dir) if data_dir else None
+        self._mcp_config_path: Path | None = None
         self.proc = None
         self.last_env: dict[str, str] | None = None
         self._calls: dict = {}
         self.spawn_count = 0
+
+    def _resolve_mcp_config_path(self) -> Path:
+        if self.data_dir is not None:
+            return self.data_dir / "turbo-hub-mcp.json"
+        if state_dir := self.server_env.get("TURBO_DESKTOP_STATE_DIR"):
+            return Path(state_dir).parent / "turbo-hub-mcp.json"
+        if env_dd := os.environ.get("TURBO_HUB_DATA"):
+            return Path(env_dd) / "turbo-hub-mcp.json"
+        if self.extra_mcp_config:
+            return Path(self.extra_mcp_config).with_name("turbo-hub-mcp.json")
+        return Path(tempfile.gettempdir()) / "turbo-hub-mcp.json"
 
     def write_mcp_config(self) -> str:
         servers: dict = {}
@@ -268,10 +282,11 @@ class ClaudeRunner:
         shim = str(Path(__file__).with_name("approval_mcp.py"))
         servers["turbohub"] = {"command": sys.executable, "args": [shim],
                                "env": {"TURBO_HUB_URL": self.hub_url, "TURBO_TASK_TOKEN": self.internal_token}}
-        fd, path = tempfile.mkstemp(prefix="turbo-hub-mcp-", suffix=".json")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"mcpServers": servers}, f)
-        return path
+        path = self._resolve_mcp_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"mcpServers": servers}), "utf-8")
+        self._mcp_config_path = path
+        return str(path)
 
     async def _ensure(self):
         if self.proc is None or self.proc.returncode is not None:
@@ -329,7 +344,14 @@ class ClaudeRunner:
     async def kill(self) -> None:
         proc, self.proc = self.proc, None
         if proc is not None and proc.returncode is None:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+            await asyncio.to_thread(
+                subprocess.run, ["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True
+            )
+        if self._mcp_config_path is not None:
+            try:
+                self._mcp_config_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def line_to_event(line: str, parser: str) -> dict | None:
@@ -379,4 +401,6 @@ class GenericRunner:
 
     async def kill(self) -> None:
         if self.proc and self.proc.returncode is None:
-            subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
+            await asyncio.to_thread(
+                subprocess.run, ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
+            )

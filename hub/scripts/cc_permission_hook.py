@@ -134,11 +134,18 @@ def _alive(pid: int) -> bool:
         except OSError:
             return False
     import ctypes
-    k = ctypes.windll.kernel32
+    from ctypes import wintypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k.GetExitCodeProcess.restype = wintypes.BOOL
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    k.CloseHandle.restype = wintypes.BOOL
     h = k.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
     if not h:
         return False
-    code = ctypes.c_ulong()
+    code = wintypes.DWORD()
     ok = k.GetExitCodeProcess(h, ctypes.byref(code))
     k.CloseHandle(h)
     return bool(ok) and code.value == 259     # STILL_ACTIVE

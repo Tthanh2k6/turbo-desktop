@@ -136,7 +136,7 @@ def build_settings(cfg: dict, dd: Path, runner_kind: str, public_url: str | None
     elif agent["mode"] == "claude-stream-json":
         runner = ClaudeRunner(hub_local, internal, mcp, command=agent.get("command") or None,
                               system_prompt=agent.get("system_prompt") or None, model=agent.get("model") or None,
-                              server_env=agent_env(cfg, dd))
+                              server_env=agent_env(cfg, dd), data_dir=dd)
         factory = lambda: runner  # noqa: E731  one long-lived process, reused per task
     else:
         cmd = agent.get("command") or cfgmod.default_agent_command("oneshot", find_claude())

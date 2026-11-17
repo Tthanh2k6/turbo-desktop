@@ -102,10 +102,31 @@ def test_pc_locked_refuses_and_battery_warns(tmp_path):
         d = env.session_client()
         r = d.request("POST", "/tasks", {"text": "hello"})
         assert r.status_code == 423 and r.json()["error"] == "pc_locked"
+        state.clear()
+        state.update(sessionLocked=True)
+        r = d.request("POST", "/tasks", {"text": "hello"})
+        assert r.status_code == 423 and r.json()["error"] == "pc_locked"
+        state.clear()
+        state.update(secureDesktopActive=True)
+        r = d.request("POST", "/tasks", {"text": "hello"})
+        assert r.status_code == 423 and r.json()["error"] == "pc_locked"
+        state.clear()
         state.update(locked=False, on_battery=True, battery_percent=15)
         _start(env, d, "hello")
         w = env.wait_event(d, lambda e: e["type"] == "warning")
         assert "15%" in w["text"]
+        aid, _ = _approval(env, d)
+        d.request("POST", f"/approvals/{aid}", {"decision": "allow"}, strong=True)
+        env.wait_event(d, lambda e: e["type"] == "task_finished")
+        state.clear()
+        state.update(sessionLocked=False, secureDesktopActive=False, onBattery=True, batteryPercent=12, displayOff=True)
+        _start(env, d, "hello")
+        evs = d.request("GET", "/events/poll?since=0").json()
+        warns = [e["text"] for e in evs if e["type"] == "warning"]
+        assert any("12%" in x for x in warns) and any("display is off" in x for x in warns)
+        aid2, _ = _approval(env, d)
+        d.request("POST", f"/approvals/{aid2}", {"decision": "allow"}, strong=True)
+        env.wait_event(d, lambda e: e["type"] == "task_finished" and e["seq"] > evs[-1]["seq"])
 
 
 def test_usage_per_task_session_day(env):
@@ -244,6 +265,24 @@ def test_internal_approve_requires_token_and_runs_gate(env):
     _start(env, d, "hang")
     r = env.http.post("/internal/approve", json={"tool_name": "Read", "input": {"p": 1}}, headers=hdr)
     assert r.json()["behavior"] == "allow"
+    r2 = env.http.post(
+        "/internal/approve",
+        json={"tool_name": "mcp__desktop__act", "input": {"window": "Calculator", "name": "Plus", "action": "click"}},
+        headers=hdr,
+    )
+    assert r2.json()["behavior"] == "allow"
+    r3 = env.http.post(
+        "/internal/approve",
+        json={"tool_name": "mcp__desktop__act", "input": {"window": "Calculator", "ref": "w1:e9", "action": "invoke"}},
+        headers=hdr,
+    )
+    assert r3.json()["behavior"] == "allow"
+    tc_evs = [e for e in env.hub.manager.events if e["type"] == "tool_call" and e.get("tool") == "mcp__desktop__act"]
+    assert tc_evs[-2]["window"] == "Calculator" and tc_evs[-2]["control"] == "Plus" and tc_evs[-2]["action"] == "click"
+    assert tc_evs[-1]["window"] == "Calculator" and tc_evs[-1]["control"] == "w1:e9" and tc_evs[-1]["action"] == "invoke"
+    act_audits = [e["data"] for e in env.hub.audit.read(50) if e["kind"] == "action" and e["data"].get("tool") == "mcp__desktop__act"]
+    assert any(a["window"] == "Calculator" and a["control"] == "Plus" and a["action"] == "click" for a in act_audits)
+    assert any(a["window"] == "Calculator" and a["control"] == "w1:e9" and a["action"] == "invoke" for a in act_audits)
 
 
 def test_runner_survives_a_screenshot_sized_line():
@@ -408,13 +447,22 @@ def test_input_lock_indicator_and_takeover_relay(tmp_path):
 
 
 def test_tool_result_summaries():
-    from turbo_hub.summaries import summarize
+    from turbo_hub.summaries import render_vi, summarize
     launch = json.dumps({"result": json.dumps({"ok": True, "windows": [{"id": "w3", "title": "Calculator"}]})})
     assert summarize("mcp__desktop__launch_app", {}, launch) == "Opened Calculator (w3)"
+    pending = json.dumps({"result": json.dumps({"ok": True, "matched": "Discord", "windows": [], "pending": True})})
+    assert summarize("mcp__desktop__launch_app", {"target": "Discord"}, pending) == "Waiting for Discord"
+    assert render_vi("launch_pending", ["Discord"]) == "Đang chờ Discord"
     act = json.dumps({"result": json.dumps({"ok": True, "via": "pattern"})})
     assert summarize("mcp__desktop__act", {"action": "click", "name": "Equals"}, act) == "Clicked 'Equals' via UIA"
+    assert summarize("mcp__desktop__act", {"action": "press_keys", "window": "Calculator"}, act) == "Pressed keys in 'Calculator' via UIA"
+    assert summarize("mcp__desktop__act", {"action": "press_keys"}, act) == "Pressed keys in '' via UIA"
     tree = json.dumps({"result": "window w3\n[w3:e1] <Button> \"1\"\n[w3:e2] <Button> \"2\"\n"})
     assert summarize("mcp__desktop__inspect_compact", {}, tree) == "Read 2 controls"
+    wlist_txt = json.dumps({"result": "w1 [fg] Calculator (calc.exe)\nw2 Explorer (explorer.exe)\n"})
+    assert summarize("mcp__desktop__windows_list", {}, wlist_txt) == "Listed 2 windows"
+    wlist_json = json.dumps({"result": json.dumps({"windows": [{"id": "w1"}, {"id": "w2"}, {"id": "w3"}]})})
+    assert summarize("mcp__desktop__windows_list", {}, wlist_json) == "Listed 3 windows"
     err = json.dumps({"result": json.dumps({"ok": False, "error": "owner is using the PC"})})
     assert summarize("mcp__desktop__act", {}, err).startswith("Failed: owner is using")
     long_text = "word " * 100
@@ -428,9 +476,9 @@ def test_tool_result_summaries():
 
 def test_live_usage_is_deduplicated_and_indicator_is_derived(tmp_path):
     script = [{"type": "tool_call", "tool": "mcp__desktop__inspect_compact", "input": {}, "window": "Calculator", "control": None, "action": "inspect"},
-              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 3}}},
-              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 5}}},   # same message again
-              {"type": "raw", "event": {"type": "usage_delta", "mid": "m2", "usage": {"input": 20, "output": 7}}},
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 3, "cache_read": 100, "cache_create": 5}}},
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 10, "output": 5, "cache_read": 100, "cache_create": 5}}},   # same message again
+              {"type": "raw", "event": {"type": "usage_delta", "mid": "m2", "usage": {"input": 20, "output": 7, "cache_read": 50, "cache_create": 10}}},
               {"type": "sleep", "s": 0.3}]
     with Env(tmp_path, runner_script=script) as env:
         env.hub.manager.engine = "desktop-mcp"
@@ -438,7 +486,9 @@ def test_live_usage_is_deduplicated_and_indicator_is_derived(tmp_path):
         d.request("POST", "/tasks", {"text": "x"})
         ev = env.wait_event(d, lambda e: e["type"] == "task_finished")
         usages = [e["usage"] for e in d.request("GET", "/events/poll?since=0").json() if e["type"] == "usage"]
-        assert usages[-1] == {"input": 30, "output": 12, "cache_read": 0, "cache_create": 0}   # not 10+10+20 / 3+5+7
+        assert usages[-1] == {"input": 30, "output": 12, "cache_read": 150, "cache_create": 15}   # not 10+10+20 / 3+5+7
+        assert ev["usage"]["input"] == 30 and ev["usage"]["output"] == 12
+        assert ev["usage"]["cache_read"] == 150 and ev["usage"]["cache_create"] == 15
         states = [e["state"] for e in d.request("GET", "/events/poll?since=0").json() if e["type"] == "indicator"]
         assert states == ["acting", "idle"]          # derived from the tool call, back to idle at the end
 
@@ -475,6 +525,12 @@ def test_summary_parts_are_language_neutral():
     from turbo_hub.summaries import summary_parts
     act = json.dumps({"result": json.dumps({"ok": True, "via": "input"})})
     assert summary_parts("mcp__desktop__act", {"action": "type", "name": "Name"}, act) == ("acted", ["type", "Name", "input"])
+    assert summary_parts("mcp__desktop__act", {"action": "press_keys", "window": "w3"}, act) == ("acted", ["press_keys", "w3", "input"])
+    assert summary_parts("mcp__desktop__act", {"action": "press_keys"}, act) == ("acted", ["press_keys", "", "input"])
+    pending = json.dumps({"result": json.dumps({"ok": True, "matched": "Calc", "windows": [], "pending": True})})
+    assert summary_parts("mcp__desktop__launch_app", {}, pending) == ("launch_pending", ["Calc"])
+    wlist = json.dumps({"result": "w1 Calc\nw2 Explorer\n"})
+    assert summary_parts("mcp__desktop__windows_list", {}, wlist) == ("listed_windows", [2])
     tree = json.dumps({"result": "[w1:e1] a" + chr(10) + "[w1:e2] b"})
     assert summary_parts("mcp__desktop__inspect_compact", {}, tree) == ("read_controls", [2])
     assert summary_parts("x", {}, "plain words")[0] == "text"
@@ -670,3 +726,25 @@ def test_two_posts_back_to_back_runner_never_called_twice(tmp_path):
         while time.time() < end and hub.manager.running_task() is not None:
             time.sleep(0.03)
         assert calls == 1 and max_active == 1
+
+
+def test_mcp_config_fixed_path_and_async_kill(tmp_path, monkeypatch):
+    from turbo_hub import runners
+    r = ClaudeRunner("http://127.0.0.1:1", "tok", claude_path="claude", data_dir=tmp_path)
+    p1 = Path(r.write_mcp_config())
+    p2 = Path(r.write_mcp_config())
+    assert p1 == p2 == tmp_path / "turbo-hub-mcp.json" and p1.exists()
+
+    to_thread_calls = []
+    orig_to_thread = asyncio.to_thread
+
+    async def spy_to_thread(fn, *args, **kwargs):
+        to_thread_calls.append((fn, args))
+        return None
+
+    monkeypatch.setattr(runners.asyncio, "to_thread", spy_to_thread)
+    r.proc = FakeProc([])
+    asyncio.run(r.kill())
+    assert len(to_thread_calls) == 1 and to_thread_calls[0][1][0][:2] == ["taskkill", "/PID"]
+    assert not p1.exists()
+    monkeypatch.setattr(runners.asyncio, "to_thread", orig_to_thread)

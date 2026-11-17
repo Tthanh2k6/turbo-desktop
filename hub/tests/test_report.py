@@ -26,6 +26,8 @@ def test_report_empty(env):
         "seconds": 0,
         "tokensIn": 0,
         "tokensOut": 0,
+        "cache_read": 0,
+        "cache_create": 0,
         "costUsd": 0.0,
     }
     assert body["topApps"] == []
@@ -73,6 +75,8 @@ def test_report_two_tasks_on_two_days_and_persistence(tmp_path):
             "seconds": 65,
             "tokensIn": 1000,
             "tokensOut": 200,
+            "cache_read": 0,
+            "cache_create": 0,
             "costUsd": 0.01,
         }
 
@@ -85,6 +89,8 @@ def test_report_two_tasks_on_two_days_and_persistence(tmp_path):
             "seconds": 25,
             "tokensIn": 0,
             "tokensOut": 0,
+            "cache_read": 0,
+            "cache_create": 0,
             "costUsd": 0.0,
         }
 
@@ -193,8 +199,31 @@ def test_history_survives_restart(tmp_path):
         ev = env.wait_event(d, lambda e: e["type"] == "approval_request")
         assert d.request("POST", f"/approvals/{ev['approval_id']}", {"decision": "allow"}, strong=True).status_code == 200
         env.wait_event(d, lambda e: e["type"] == "task_finished")
+        hist_mem = d.request("GET", "/tasks").json()
+        assert hist_mem and hist_mem[0]["answer"] == "Finished the scripted task."
         env.hub.manager.tasks.clear()   # what a hub restart loses
         hist = d.request("GET", "/tasks").json()
         assert hist and hist[0]["text"] == "first day task" and hist[0]["status"] == "done"
+        assert hist[0]["answer"] == "Finished the scripted task."
         st = d.request("GET", "/status").json()
         assert isinstance(st.get("pcName"), str)
+
+
+def test_report_cache_tokens_and_stopped_task_live_usage(tmp_path):
+    script = [
+        {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 50, "output": 15, "cache_read": 4000, "cache_create": 300}}},
+        {"type": "text", "text": "still working"},
+        {"type": "sleep", "s": 30},
+    ]
+    with Env(tmp_path, runner_script=script) as env:
+        d = env.session_client()
+        assert d.request("POST", "/tasks", {"text": "stop me"}).status_code == 200
+        env.wait_event(d, lambda e: e["type"] == "text")
+        assert d.request("POST", "/stop", {}).status_code == 200
+        env.wait_event(d, lambda e: e["type"] == "task_finished" and e["status"] == "stopped")
+        rep = d.request("GET", "/report?days=7").json()
+        assert rep["totals"]["stopped"] == 1
+        assert rep["totals"]["tokensIn"] == 50
+        assert rep["totals"]["tokensOut"] == 15
+        assert rep["totals"]["cacheRead"] == 4000
+        assert rep["totals"]["cacheCreate"] == 300

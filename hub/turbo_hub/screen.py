@@ -10,6 +10,7 @@ from typing import Callable, Sequence
 from PIL import Image
 
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 # Exact secret-title patterns from desktop-mcp/src/turbo_desktop/security.py
 SECRET_TITLE_PATTERNS = [
@@ -17,10 +18,47 @@ SECRET_TITLE_PATTERNS = [
     r"password", r"mật khẩu", r"api[_-]?key",
 ]
 
+OWNER_APPROVAL_TITLES = {
+    "claude code cần duyệt",
+    "claude code needs approval",
+    "turbo-desktop: approve action?",
+}
+
+SECRET_PROCESSES = {
+    "bitwarden",
+    "keepass",
+    "keepassxc",
+    "1password",
+    "lastpass",
+    "dashlane",
+    "nordpass",
+    "roboform",
+    "enpass",
+    "protonpass",
+}
+
+
+def _norm_process(process: str | None) -> str:
+    if not process:
+        return ""
+    name = str(process).strip().replace("/", "\\").rsplit("\\", 1)[-1].lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return name
+
+
+def is_secret_process(process: str | None, processes: Sequence[str] | set[str] = SECRET_PROCESSES) -> bool:
+    norm = _norm_process(process)
+    if not norm:
+        return False
+    return norm in {_norm_process(p) for p in processes}
+
 
 def is_secret_title(title: str | None, patterns: Sequence[str] = SECRET_TITLE_PATTERNS) -> bool:
     if not title:
         return False
+    if title.strip().lower() in OWNER_APPROVAL_TITLES:
+        return True
     for pat in patterns:
         try:
             if re.search(pat, title, re.I):
@@ -28,6 +66,39 @@ def is_secret_title(title: str | None, patterns: Sequence[str] = SECRET_TITLE_PA
         except re.error:
             continue
     return False
+
+
+def _window_process(hwnd: int, user32=None, kernel32=None) -> str:
+    if not hasattr(ctypes, "windll"):
+        return ""
+    u32 = user32 or ctypes.windll.user32
+    k32 = kernel32 or ctypes.windll.kernel32
+    u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    u32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+    ]
+    k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+
+    pid = wintypes.DWORD(0)
+    u32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+    if not pid.value:
+        return ""
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not h:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return ""
+        return _norm_process(buf.value)
+    finally:
+        k32.CloseHandle(h)
 
 
 def _window_rect(hwnd: int, user32, dwmapi) -> tuple[int, int, int, int] | None:
@@ -51,10 +122,11 @@ def _window_rect(hwnd: int, user32, dwmapi) -> tuple[int, int, int, int] | None:
 
 
 def enum_windows() -> list[dict]:
-    """Enumerate visible top-level windows via ctypes: [{"title": str, "rect": (left, top, right, bottom)}]."""
+    """Enumerate visible top-level windows via ctypes: [{"title": str, "rect": (left, top, right, bottom), "process": str}]."""
     if not hasattr(ctypes, "windll"):
         return []
     user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
     dwmapi = getattr(ctypes.windll, "dwmapi", None)
     out: list[dict] = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -63,16 +135,17 @@ def enum_windows() -> list[dict]:
         if not user32.IsWindowVisible(hwnd):
             return True
         length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value
-        if not title:
+        title = ""
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value
+        proc = _window_process(hwnd, user32, kernel32)
+        if not title and not is_secret_process(proc):
             return True
         r = _window_rect(hwnd, user32, dwmapi)
         if r is not None:
-            out.append({"title": title, "rect": r})
+            out.append({"title": title, "rect": r, "process": proc})
         return True
 
     user32.EnumWindows(WNDENUMPROC(_cb), 0)
@@ -91,16 +164,30 @@ def grab_primary() -> tuple[Image.Image, tuple[int, int, int, int]]:
 
 
 def _unpack_window(w) -> tuple[str, tuple[int, int, int, int]]:
+    title, rect, _ = _unpack_window_full(w)
+    return title, rect
+
+
+def _unpack_window_full(w) -> tuple[str, tuple[int, int, int, int], str]:
     if isinstance(w, dict):
         rect = w.get("rect") or (w["left"], w["top"], w["right"], w["bottom"])
-        return str(w.get("title") or ""), (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+        proc = str(w.get("process") or w.get("app") or "")
+        return str(w.get("title") or ""), (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])), proc
     if isinstance(w, (tuple, list)):
         if len(w) == 2:
             r = w[1]
-            return str(w[0] or ""), (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+            return str(w[0] or ""), (int(r[0]), int(r[1]), int(r[2]), int(r[3])), ""
+        if len(w) == 3 and isinstance(w[1], (tuple, list)):
+            r = w[1]
+            return str(w[0] or ""), (int(r[0]), int(r[1]), int(r[2]), int(r[3])), str(w[2] or "")
         if len(w) >= 5:
-            return str(w[0] or ""), (int(w[1]), int(w[2]), int(w[3]), int(w[4]))
-    return str(getattr(w, "title", "") or ""), tuple(int(x) for x in getattr(w, "rect"))  # type: ignore[return-value]
+            proc = str(w[5] or "") if len(w) >= 6 else ""
+            return str(w[0] or ""), (int(w[1]), int(w[2]), int(w[3]), int(w[4])), proc
+    return (
+        str(getattr(w, "title", "") or ""),
+        tuple(int(x) for x in getattr(w, "rect")),  # type: ignore[return-value]
+        str(getattr(w, "process", "") or ""),
+    )
 
 
 def redact_image(
@@ -108,8 +195,9 @@ def redact_image(
     windows: Sequence,
     patterns: Sequence[str] = SECRET_TITLE_PATTERNS,
     monitor_rect: tuple[int, int, int, int] | None = None,
+    processes: Sequence[str] | set[str] = SECRET_PROCESSES,
 ) -> tuple[Image.Image, int]:
-    """Black out every window whose title matches `patterns`. Returns (redacted_image, count)."""
+    """Black out every window whose title matches `patterns`/owner-approval titles or whose process is in `processes`."""
     if isinstance(img, (bytes, bytearray)):
         out = Image.open(io.BytesIO(img)).convert("RGB")
     else:
@@ -117,8 +205,8 @@ def redact_image(
     ml, mt, _mr, _mb = monitor_rect or (0, 0, out.width, out.height)
     redacted = 0
     for w in windows:
-        title, (l, t, r, b) = _unpack_window(w)
-        if not is_secret_title(title, patterns):
+        title, (l, t, r, b), proc = _unpack_window_full(w)
+        if not (is_secret_title(title, patterns) or is_secret_process(proc, processes)):
             continue
         x0 = max(0, min(out.width, l - ml))
         y0 = max(0, min(out.height, t - mt))
@@ -154,7 +242,7 @@ def capture_screen_jpeg(
         mon_rect = None
     windows, seen = [], set()   # is still blacked out (union of both lists, duplicates dropped)
     for w in list(before) + list(_windows()):
-        key = _unpack_window(w)
+        key = _unpack_window_full(w)
         if key not in seen:
             seen.add(key); windows.append(w)
     img, redacted = redact_image(img, windows, patterns, mon_rect)
