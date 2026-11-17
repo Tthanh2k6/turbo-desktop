@@ -92,4 +92,64 @@ class UiTest {
         show { AuditTab() }
         rule.onNodeWithText(str(R.string.audit_bad)).assertIsDisplayed()
     }
+
+    @Test fun approvalClaudeCodeShowsChipDetailAndNoCountdown() {
+        Graph.pending.value = listOf(
+            Approval(
+                id = "c1",
+                tool = "Bash",
+                window = "",
+                control = "pytest hub/tests -q",
+                action = "run_command",
+                cropPng = null,
+                expiresAt = 0.0,
+                detail = "pytest hub/tests -q\nThư mục: D:\\turbo-desktop",
+                source = "claude_code",
+            )
+        )
+        show { ApprovalsTab(rule.activity) }
+        rule.onNodeWithTag("approval").assertIsDisplayed()
+        rule.onNodeWithTag("ccSourceChip").assertIsDisplayed()
+        rule.onNodeWithText("Claude Code").assertIsDisplayed()
+        rule.onNodeWithTag("approvalDetail").assertIsDisplayed().assertTextContains("pytest hub/tests -q", substring = true)
+        rule.onNodeWithText(str(R.string.appr_no_timeout)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.appr_timeout)).assertDoesNotExist()
+        Graph.pending.value = emptyList()
+    }
+
+    @Test fun fullScreenPlayerOpensWithZoomableScreen() {
+        Graph.stopped.value = false
+        Graph.screenViewEnabled.value = true
+        Graph.screenBitmap.value = androidx.compose.ui.graphics.ImageBitmap(16, 9)
+        show { WorkTab(activity = rule.activity) }
+        rule.onNodeWithTag("screenPlayer").assertIsDisplayed()
+        rule.onNodeWithTag("playerFullscreen").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("fullScreenPlayer").assertIsDisplayed()
+        rule.onNodeWithTag("zoomableScreen").assertIsDisplayed()
+        Graph.screenBitmap.value = null
+    }
+
+    @Test fun reportTabShowsOverviewAndLogTabs() {
+        Graph.report.value = ReportData(
+            periodDays = 7,
+            days = listOf(ReportDay("2026-11-18", done = 2, failed = 0, stopped = 1, seconds = 120)),
+            totals = ReportTotals(done = 2, failed = 0, stopped = 1, seconds = 120, tokensIn = 1000, tokensOut = 200, costUsd = 0.02),
+            topApps = listOf(ReportApp("Calculator", 3)),
+        )
+        Graph.auditOk.value = true
+        Graph.audit.value = emptyList()
+        show { ReportTab() }
+        rule.onNodeWithText(str(R.string.report_seg_overview)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.report_seg_log)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.report_p_today)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.report_p_7d)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.report_p_30d)).assertIsDisplayed()
+        rule.onNodeWithTag("reportChart").assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.report_seg_log)).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText(str(R.string.audit_f_all)).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.audit_f_approvals)).assertIsDisplayed()
+        Graph.report.value = null
+    }
 }
