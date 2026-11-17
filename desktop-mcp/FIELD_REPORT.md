@@ -38,3 +38,24 @@ FIELD_TASKS.md lists 30 desktop tasks (31 to 34 belong to the hub and phone run)
 ## What the pass rate looks like
 
 First pass: 8 pass, 3 fail (tasks 8, 19 as unverifiable, 30 as unproven), then 1 more fail (21). After fixes: 11 of 12 run tasks pass; the last one is an open limit. The curve stopped moving because the remaining tasks need real input or apps I could not safely start, not because the tools got everything right.
+
+## Second round (17/11, after the session-restore rule, input lock and edge glow)
+
+The owner was at the PC during this round (idle 3 to 90 s, never the 2 minutes the real-input tasks need), so most real-input tasks could not run. The runner now waits up to 5 minutes for the idle check, then marks the task `skipped-busy`.
+
+| Task | Result |
+| :--- | :--- |
+| 5 Explorer, 200 files in a new window on `%TEMP%\turbo-field\big` | pass: first 5 names and the total (200) read correctly, 4 calls, but about 2,300 tokens of result (the list is long; `query=` or `maxChars` would cut it) |
+| 21k Editor fixture, Ctrl+S to open Save As | FAIL, 2 findings below |
+| 20 (focus change before Ctrl+S), cv (OCR click), 18 (UniKey/Telex typing), 30L (STOP with the input lock), 4 (Explorer create + rename), 22 (Explorer context menu) | `skipped-busy` (owner active) |
+| 26 (second monitor / 150% DPI) | not testable: one monitor at 100% |
+| 4 and 22 and 20 and 18 as written | prompts and fixtures are ready (`tests/field/run_field.py`); they run as soon as the PC is idle for 2 minutes |
+
+New failures:
+
+9. **`act(press_keys)` with only a window answered "need ref or name" (task 21k).** Keyboard shortcuts such as Ctrl+S belong to the window, not to a control. Fix: with no ref or name the keys go to the window itself. Regression: `test_press_keys_without_target_goes_to_the_window`.
+10. **OPEN: after Ctrl+S the Save As dialog never showed up in `windows_list`, and every UIA call on the editor failed with a COMError** (the app is inside its modal loop). The tool returned `internal: true` with the raw COM code; it told the truth but gave no hint. Probable cause: the common dialog is a separate top-level window that the enumeration did not return, or it is cloaked while opening. Not reproduced yet because it needs real input and the owner was present. Next step: enumerate by process id including hidden/cloaked windows after a modal opens, and turn a COMError on a blocked window into "window is busy in a modal dialog".
+
+Also from the owner's list this round: shared lock respected (the hub agent held it for long stretches; my runs waited), the field runner now refuses prompts that start a session-restore app, and the tool results for real input carry `owner_took_over` and `stopped`.
+
+Counts after this round: **14 tasks run, 12 pass, 2 fail (21, 21k)**, 7 more `skipped-busy`, 1 not testable (26).

@@ -4,6 +4,7 @@ The inner agent gets NO file/shell tools and runs in an empty temp dir, so it ca
 Usage: python tests/field/run_field.py <task-id> [<task-id> ...]   (results appended to tmp/field/results.jsonl)
 """
 import glob
+import re
 import json
 import os
 import subprocess
@@ -50,15 +51,66 @@ TASKS = {
                       "title afterwards. Close the window at the end.", needs_input=True),
     "21": dict(prompt=f"Open the app at {ed}. Use its File menu to choose 'Save As...'. A Save dialog should appear: report its title and the names of its main controls. "
                       "Then cancel the dialog and close the app.", kill="turbo_editor"),
-    "4": dict(prompt="Open a NEW File Explorer window on the folder {tmp} (launch_app explorer with args). Report the window title and the names of the first 5 items "
+    "20": dict(prompt=f"Open the editor app at {ed} with launch_app args '--accept-keys'. Then open the app at {fx} (this one takes the keyboard focus). "
+                      "Now, with the editor window as your target, press Ctrl+S (press_keys with '{{Ctrl}}s'). A 'Save As' dialog should appear from the editor. "
+                      "Report: did the tool notice that the editor was not in front, and did the dialog open? Cancel the dialog with press_keys '{{Esc}}' and close both apps.",
+               needs_input=True),
+    "21k": dict(prompt=f"Open the app at {ed} with launch_app args '--accept-keys'. Set its text to 'hello'. Press Ctrl+S with press_keys ('{{Ctrl}}s') to open its Save As dialog. "
+                       "Report the dialog's title and the names of its main controls, then cancel it with press_keys '{{Esc}}' and close the app.", needs_input=True),
+    "18": dict(prompt=f"Open the app at {fx} with launch_app args '--accept-keys'. Use act action send_text to type the text 'doodle aa dd' into the field 'Full name' "
+                      "(real keyboard typing). Report exactly what the tool said and what the field holds afterwards. Do not try to work around anything, just report. Close the app.",
+               needs_input=True, note="UniKeyNT is running on this PC; Telex turns oo/aa/dd into diacritics"),
+    "4": dict(prompt="Open a NEW File Explorer window on the folder {tmp}\\explorer-a with launch_app (target explorer, args that folder). Create a new folder named 'turbo-new' in it "
+                     "(press_keys Ctrl+Shift+N, then type the name with send_text, then Enter), then rename it to 'turbo-renamed' (select it, F2). Report the names of the items in the window at the end. "
+                     "Close that Explorer window.", needs_input=True, setup="explorer-a"),
+    "5": dict(prompt="Open a NEW File Explorer window on the folder {tmp}\\big with launch_app (target explorer, args that folder). It holds 200 files. Read the names of the first 5 items "
+                     "you can see and say how many items the window reports in total, if it shows that. Do not change anything. Close that Explorer window.",
+              setup="big"),
+    "22": dict(prompt="Open a NEW File Explorer window on the folder {tmp}\\explorer-a with launch_app (target explorer, args that folder). Open the context menu of the empty area "
+                      "(press_keys '{Apps}' or shift+F10 after focusing the file list) and report the first 8 menu entries. Then close the menu with press_keys '{Esc}' and close the Explorer window. "
+                      "Do not click any menu entry.", needs_input=True, setup="explorer-a"),
+    "30L": dict(prompt=f"Open the app at {fx} with launch_app args '--accept-keys'. Using ONE batch_actions call run in order: act press_keys '{{Tab}}' on the window (real input); "
+                       "wait_for the text 'Zzz never' with timeout 25; act press_keys '{{Tab}}'. Report exactly what the batch returned. Close the app.",
+                needs_input=True, note="STOP file is created 14 s into the run; input lock must be released"),
+    "4o": dict(prompt="Open a NEW File Explorer window on the folder {tmp} (launch_app explorer with args). Report the window title and the names of the first 5 items "
                      "in the file list. Do not change anything. Close that Explorer window at the end.", explorer=True),
 }
 
 
+SESSION_RESTORE_RE = re.compile(r"\b(notepad|vs ?code|visual studio code|edge|chrome|word|winword|excel)\b", re.I)
+
+
+def refuses(t):
+    """Hard rule: a field task that starts a session-restore app (it would reopen the owner's tabs/files) is refused.
+    The server also runs with TURBO_DESKTOP_REQUIRE_CLEAN=1, so launch_app refuses these apps without a clean path."""
+    return bool(SESSION_RESTORE_RE.search(t.get("prompt", ""))) and not t.get("clean_launch")
+
+
+def _setup(name):
+    """Create the work folders the explorer tasks need (inside %TEMP%\\turbo-field only)."""
+    root = Path(tempfile.gettempdir()) / "turbo-field"
+    if name == "explorer-a":
+        (root / "explorer-a").mkdir(parents=True, exist_ok=True)
+        (root / "explorer-a" / "readme.txt").write_text("field run", encoding="utf-8")
+    elif name == "big":
+        d = root / "big"
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(200):
+            (d / f"file_{i:03d}.txt").write_text(str(i), encoding="utf-8")
+    return str(root)
+
+
 def run(tid):
     t = TASKS[tid]
+    if refuses(t):
+        res = {"task": tid, "status": "refused-session-restore"}
+        _log(res)
+        return res
     if t.get("needs_input"):
         import turbo_desktop.winsys as ws
+        end = time.time() + float(os.environ.get("FIELD_WAIT_IDLE", "300"))  # wait for the owner to be away, up to 5 min
+        while ws.idle_seconds() < 120 and time.time() < end:
+            time.sleep(5)
         if ws.idle_seconds() < 120:
             res = {"task": tid, "status": "skipped-busy", "idle": round(ws.idle_seconds())}
             _log(res)
@@ -67,11 +119,12 @@ def run(tid):
     state = tempfile.mkdtemp(prefix="field-state-", dir=OUT)
     work = OUT / "work"
     work.mkdir(exist_ok=True)
-    prompt = t["prompt"].replace("{tmp}", str(work))
+    root = _setup(t["setup"]) if t.get("setup") else str(work)
+    prompt = t["prompt"].replace("{tmp}", root)
     env = {
         "TURBO_DESKTOP_STATE_DIR": state, "TURBO_DESKTOP_PRESET": t.get("preset", "easy"),
         "TURBO_DESKTOP_APPROVAL_TIMEOUT": "6", "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT / "src"),
-        "TURBO_DESKTOP_NO_INPUT": "0" if t.get("needs_input") else "1",
+        "TURBO_DESKTOP_REQUIRE_CLEAN": "1", "TURBO_DESKTOP_NO_INPUT": "0" if t.get("needs_input") else "1",
         "TURBO_DESKTOP_CONFIG": str(Path(state) / "none.toml"),
     }
     cfg = {"mcpServers": {"turbo-desktop": {"command": str(ROOT / ".venv" / "Scripts" / "python.exe"),
@@ -83,7 +136,7 @@ def run(tid):
            "--verbose", "--model", "sonnet", "--max-turns", "30", "--permission-mode", "bypassPermissions",
            "--disallowedTools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,Agent,NotebookEdit,PowerShell"]
     t0 = time.time()
-    if tid == "30":  # emergency stop while the batch runs
+    if tid in ("30", "30L"):  # emergency stop while the batch runs
         threading.Timer(14, lambda: (Path(state) / "STOP").write_text("field")).start()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=420, stdin=subprocess.DEVNULL)
     wall = time.time() - t0

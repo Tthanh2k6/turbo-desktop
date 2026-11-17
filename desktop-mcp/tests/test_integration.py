@@ -170,3 +170,12 @@ def test_long_value_reports_length(launch_app, desktop):
     r = desktop.act(d["id"], "set_value", name="Short code", text="x" * 600)
     assert r["length"] == 600
     assert desktop.act(d["id"], "read", name="Short code")["length"] == 600
+
+
+def test_press_keys_without_target_goes_to_the_window(launch_app, desktop):
+    """Field bug 9: act(press_keys) with only a window (e.g. Ctrl+S) answered 'need ref or name'."""
+    if REAL_INPUT:
+        pytest.skip("real input enabled")
+    d = launch_app("turbo_fixture.exe")
+    with pytest.raises(ToolError, match="real input disabled"):
+        desktop.act(d["id"], "press_keys", keys="{Ctrl}s")

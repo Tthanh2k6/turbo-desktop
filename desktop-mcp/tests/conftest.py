@@ -17,6 +17,8 @@ os.environ["TURBO_DESKTOP_STATE_DIR"] = _state
 os.environ["TURBO_DESKTOP_AUDIT"] = str(Path(_state) / "audit.jsonl")
 os.environ["TURBO_DESKTOP_NO_INPUT"] = "0" if os.environ.get("TURBO_DESKTOP_REAL_INPUT") == "1" else "1"
 os.environ["TURBO_DESKTOP_PRESET"] = "easy"
+os.environ["TURBO_DESKTOP_REQUIRE_CLEAN"] = "1"  # hard rule: our tests never launch a session-restore app without a clean path
+os.environ["TURBO_DESKTOP_NO_INDICATOR"] = "1"  # Desktop objects in tests do not draw the glow; test_border.py draws it explicitly
 os.environ.pop("TURBO_DESKTOP_CONFIG", None)
 os.environ["TURBO_DESKTOP_CONFIG"] = str(Path(_state) / "no-such-config.toml")  # ignore any user config
 

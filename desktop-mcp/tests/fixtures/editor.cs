@@ -18,7 +18,7 @@ class Editor : Form {
     StartPosition = FormStartPosition.Manual; Location = new Point(80, 80);
     var ms = new MenuStrip();
     var file = new ToolStripMenuItem("File");
-    var save = new ToolStripMenuItem("Save As...");
+    var save = new ToolStripMenuItem("Save As...") { ShortcutKeys = Keys.Control | Keys.S };
     save.Click += (s, e) => {
       using (var d = new SaveFileDialog()) {
         d.Filter = "Text|*.txt|All|*.*"; d.Title = "Save As";

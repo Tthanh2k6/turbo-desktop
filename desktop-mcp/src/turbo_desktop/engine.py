@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import subprocess
 import time
 from pathlib import Path
@@ -15,8 +16,11 @@ import win32api
 import win32con
 import win32gui
 
+from . import rules as rules_mod
 from . import security as sec
+from . import border as border_mod
 from . import winsys
+from .inputlock import InputLock
 
 P = auto.PatternId
 
@@ -24,7 +28,7 @@ INTERACTIVE = {"Button", "CheckBox", "RadioButton", "Edit", "ComboBox", "ListIte
                "Hyperlink", "Slider", "Spinner", "TreeItem", "SplitButton", "Document", "DataItem"}
 VALUE_ROLES = {"Edit", "ComboBox", "Document", "Spinner"}
 TOGGLE_ROLES = {"CheckBox", "RadioButton", "MenuItem", "Button", "ListItem", "TabItem", "TreeItem", "DataItem"}
-APP_ALIASES = {"notepad": "notepad.exe", "calc": "calc.exe", "calculator": "calc.exe", "paint": "mspaint.exe",
+APP_ALIASES = {"vscode": "code", "edge": "msedge", "notepad": "notepad.exe", "calc": "calc.exe", "calculator": "calc.exe", "paint": "mspaint.exe",
                "explorer": "explorer.exe"}
 
 
@@ -85,6 +89,8 @@ class Desktop:
         self.idle_fn = idle_fn or winsys.idle_seconds
         self.sleep = sleep_fn
         self._own_input_at = 0.0
+        self.lock = InputLock()
+        self.indicator = border_mod.Indicator(disabled_by_env=os.environ.get("TURBO_DESKTOP_NO_INDICATOR") == "1")
 
     # ------------------------------------------------------------ windows
 
@@ -132,6 +138,7 @@ class Desktop:
 
     def _guard_window(self, d: dict, action: str):
         if sec.stop_requested():
+            self.indicator.hide_now()
             raise ToolError("emergency stop active: all actions blocked until resumed from the phone", stopped=True)
         if d.get("denied"):
             self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, reason=d["denied"])
@@ -437,12 +444,20 @@ class Desktop:
             self.sleep(0.25)
 
     def real_input(self, fn):
-        """Run fn() as real input: idle gate, then restore previous foreground window and cursor."""
+        """Run fn() as real input: idle gate, input lock (owner's keyboard/mouse paused + banner), then restore the
+        previous foreground window and cursor. Raises owner_took_over if the owner pressed Esc x3 meanwhile."""
         if no_input():
             raise ToolError("real input disabled (TURBO_DESKTOP_NO_INPUT=1) and no UIA pattern available")
         self.wait_owner_idle()
+        cfg = rules_mod.load_ruleset().input_lock
+        use_lock = cfg["mode"] in ("real_input", "whole_task") and os.environ.get("TURBO_DESKTOP_INPUT_LOCK", "1") != "0"
         prev_fg = win32gui.GetForegroundWindow()
         prev_pos = win32api.GetCursorPos()
+        self.indicator.real_input(True)     # hard floor: the frame shows while real input is sent, whatever [indicator] says
+        if use_lock:
+            self.lock.acquire(cfg["max_seconds"], whole_task=(cfg["mode"] == "whole_task"))
+            self.indicator.locked(True)
+            self.audit.write(event="input_lock", state="on", mode=cfg["mode"])
         try:
             return fn()
         finally:
@@ -453,6 +468,50 @@ class Desktop:
                     win32gui.SetForegroundWindow(prev_fg)
             except Exception:
                 pass
+            self.indicator.real_input(False)
+            if use_lock:
+                info = self.lock.end_one()
+                self.lock.touch()
+                self.indicator.locked(bool(info["locked"]))
+                if info["owner_took_over"] or info["stopped"]:
+                    self.indicator.hide_now()
+                self.audit.write(event="input_lock", state="off" if not info["locked"] else "held", **info)
+                if info["owner_took_over"] or info["stopped"]:
+                    raise ToolError("the owner took the keyboard and mouse back (Esc x3): run paused" if info["owner_took_over"]
+                                    else "STOP hotkey pressed: all actions blocked",
+                                    owner_took_over=bool(info["owner_took_over"]), stopped=bool(info["stopped"]))
+
+    def _ind_activity(self):
+        """Edge glow: any act / batch / launch / window_control (not read-only calls)."""
+        try:
+            ind = rules_mod.load_ruleset().indicator
+            self.indicator.configure(ind["border"], ind["color"])
+            self.indicator.activity()
+        except Exception:
+            pass
+
+    def bring_front(self, hwnd) -> bool:
+        """Make `hwnd` the foreground window before real input (a click lands on whatever is on top, keys go to the
+        foreground window). Returns True only when it really is in front afterwards."""
+        try:
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            if win32gui.GetForegroundWindow() != hwnd:
+                win32api.keybd_event(0x12, 0, 0, 0)       # a tap of Alt lets SetForegroundWindow through
+                win32api.keybd_event(0x12, 0, 2, 0)
+                win32gui.SetForegroundWindow(hwnd)
+            for _ in range(10):
+                if win32gui.GetForegroundWindow() == hwnd:
+                    return True
+                time.sleep(0.05)
+        except Exception:
+            pass
+        return win32gui.GetForegroundWindow() == hwnd
+
+    def _front_or_fail(self, d):
+        if not self.bring_front(d["hwnd"]):
+            raise ToolError(f"window '{d['title']}' could not be brought to the front; no input was sent "
+                            f"(another window kept the focus)", focus_lost=True)
 
     # ------------------------------------------------------------ acting
 
@@ -495,9 +554,13 @@ class Desktop:
 
     def act(self, window, action="click", ref=None, name=None, role=None, text=None, value=None, keys=None,
             direction=None, amount=1):
+        self._ind_activity()
         d = self.find_window(window) if window else self.find_window(self._parse_ref(ref)[0].wid)
         self._guard_window(d, action)
-        w, c, ocr = self.resolve(d, ref, name, role)
+        if action == "press_keys" and not ref and not name:   # keys for the window itself (shortcuts like Ctrl+S)
+            w, c, ocr = self._win(d["hwnd"]), None, None
+        else:
+            w, c, ocr = self.resolve(d, ref, name, role)
         info = {"name": "", "role": "text(ocr)", "automation_id": "", "help_text": "", "multiline": False, "is_password": False}
         if c is not None:
             info = self._describe(d, c)
@@ -573,7 +636,7 @@ class Desktop:
             if action not in ("click", "invoke"):
                 raise ToolError("OCR refs only support click")
             x, y, _ = w.ocr[ocr[1]]
-            self.real_input(lambda: auto.Click(x, y))
+            self.real_input(lambda: (self._front_or_fail(d), auto.Click(x, y)))
             return "ocr", {}
         role = info["role"]
         if action in ("click", "invoke"):
@@ -602,7 +665,7 @@ class Desktop:
             r = c.BoundingRectangle
             if r.width() <= 0:
                 raise ToolError("no pattern and element has no on-screen rect")
-            self.real_input(lambda: auto.Click((r.left + r.right) // 2, (r.top + r.bottom) // 2))
+            self.real_input(lambda: (self._front_or_fail(d), auto.Click((r.left + r.right) // 2, (r.top + r.bottom) // 2)))
             return "input", {}
         if action == "toggle":
             tp = c.GetPattern(P.TogglePattern)
@@ -619,7 +682,7 @@ class Desktop:
             s = text if text is not None else value
             if s is None:
                 raise ToolError("need text=")
-            return self._type_real(c, self._resolve_secret(str(s)), replace=False)
+            return self._type_real(d, c, self._resolve_secret(str(s)), replace=False)
         if action in ("set_value", "type"):
             s = text if text is not None else value
             if s is None:
@@ -642,7 +705,7 @@ class Desktop:
                 return "pattern", self._state(c)
             if role == "ComboBox":
                 return self._select_item(c, s)
-            return self._type_real(c, s, replace=(action == "set_value"))
+            return self._type_real(d, c, s, replace=(action == "set_value"))
         if action == "select":
             s = text if text is not None else value
             if role == "ComboBox" or (s and c.GetPattern(P.ExpandCollapsePattern)):
@@ -698,6 +761,7 @@ class Desktop:
             if not keys:
                 raise ToolError("need keys= (uiautomation SendKeys syntax, e.g. '{Ctrl}s')")
             def go():
+                self._front_or_fail(d)
                 if c is not None:
                     try:
                         c.SetFocus()
@@ -736,11 +800,12 @@ class Desktop:
             return {"warn": "Invoke raised COMError (a dialog may have opened); verify with windows_list/wait_for"}
         return {}
 
-    def _type_real(self, c, s, replace):
+    def _type_real(self, d, c, s, replace):
         vp = c.GetPattern(P.ValuePattern)
         before = (vp.Value or "") if vp else None
 
         def go():
+            self._front_or_fail(d)
             c.SetFocus()
             if replace:
                 auto.SendKeys("{Ctrl}a", waitTime=0)
@@ -809,6 +874,7 @@ class Desktop:
     # ------------------------------------------------------------ other tools
 
     def batch(self, steps: list[dict], window=None, return_snapshot=False) -> dict:
+        self._ind_activity()
         results = []
         failed = None
         for i, st in enumerate(steps):
@@ -868,23 +934,55 @@ class Desktop:
                 raise ToolError(f"timeout waiting for {'gone ' if gone else ''}{text or title or window}")
             time.sleep(0.2)
 
+    def _clean_launch(self, exe_name, path):
+        """(argv, description) for a launch that does not reopen the user's previous documents, or None."""
+        tmp = Path(tempfile.gettempdir()) / "turbo-desktop-clean"
+        tmp.mkdir(parents=True, exist_ok=True)
+        stamp = str(int(time.time() * 1000))
+        if exe_name == "notepad":
+            f = tmp / f"new-{stamp}.txt"
+            f.write_text("", encoding="utf-8")
+            return [path, str(f)], f"new temp file {f}"
+        if exe_name == "code":
+            d = tmp / f"ws-{stamp}"
+            d.mkdir()
+            return [path, "--new-window", str(d)], f"--new-window on temp folder {d}"
+        return None
+
     def launch(self, target: str, args: str = "", wait=8.0) -> dict:
+        self._ind_activity()
         t = APP_ALIASES.get(target.lower(), target)
         exe_name = Path(t).stem.lower()
-        cls = sec.classify_action(process=exe_name, window_title=None, action="launch")
+        rs = rules_mod.load_ruleset()
+        restores = exe_name in rs.session_restore
+        cls = sec.classify_action(process=exe_name, window_title=None, action="launch", session_restore=restores)
         if cls.level == "deny":
             raise ToolError(cls.reason, denied=True, rule=cls.rule)
         base = {"action": "launch", "control": t, "window": "", "process": exe_name}
         if sec.stop_requested():
             raise ToolError("emergency stop active", stopped=True)
+        path = t if os.path.isabs(t) or os.sep in t or "/" in t else (shutil.which(t) or t)
+        argv = [path] + (args.split() if args else [])
+        extra = {}
+        if restores:
+            require_clean = os.environ.get("TURBO_DESKTOP_REQUIRE_CLEAN") == "1"
+            clean = self._clean_launch(exe_name, path) if (rs.preset == "strict" or require_clean) else None
+            if require_clean and not clean:
+                raise ToolError(f"{exe_name} reopens the user's previous documents and has no clean-launch path; refused "
+                                f"(TURBO_DESKTOP_REQUIRE_CLEAN=1)", rule="launch-session-restore")
+            if clean:
+                argv = clean[0]
+                extra = {"launchMode": "clean", "clean": clean[1]}
+            else:
+                extra = {"launchMode": "normal",
+                         "warn": "this app may reopen the user's previous files; their contents will be visible to the model"}
         if cls.level == "ask":
             ok, aid = sec.request_approval(self.audit, {**base, "reason": cls.reason, "rule": cls.rule})
             if not ok:
                 raise ToolError(f"approval denied or timed out: {cls.reason}", approval="deny", rule=cls.rule)
-        path = t if os.path.isabs(t) or os.sep in t or "/" in t else (shutil.which(t) or t)
         before = {d["hwnd"] for d in self.windows_list()}
         try:
-            subprocess.Popen([path] + (args.split() if args else []), close_fds=True, startupinfo=no_activate_startupinfo())
+            subprocess.Popen(argv, close_fds=True, startupinfo=no_activate_startupinfo())
         except OSError as e:
             raise ToolError(f"cannot start {t}: {e}")
         end = time.time() + float(wait)
@@ -899,7 +997,7 @@ class Desktop:
         for d in new:
             self.launched.add(d["hwnd"])
         self.audit.write(event="action", ok=bool(new), via="launch", new_windows=[d["title"] for d in new], **base)
-        return {"ok": True, "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new]}
+        return {"ok": True, **extra, "windows": [{k: d[k] for k in ("id", "title", "process", "pid")} for d in new]}
 
     def close_launched(self):
         """Close every window this Desktop launched (matched by window handle, so UWP apps whose process differs
@@ -913,6 +1011,7 @@ class Desktop:
         self.launched.clear()
 
     def window_control(self, window, action):
+        self._ind_activity()
         d = self.find_window(window)
         self._guard_window(d, "focus" if action != "close" else "close")
         hwnd = d["hwnd"]

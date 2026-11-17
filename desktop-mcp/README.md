@@ -67,6 +67,47 @@ Other behaviour:
 - Windows of elevated programs are shown with `elevated: true, actionable: false` and are never acted on (Windows blocks it anyway).
 - `system_state` reports a UAC prompt or lock screen (`secureDesktopActive`), idle seconds and battery.
 
+## Input lock (real input only)
+
+When the AI has to use the real keyboard or mouse (no UIA pattern available, OCR clicks, `press_keys`, `send_text`), your physical keyboard and mouse are paused for the length of that action, so you cannot knock it off course. No admin rights are needed: it uses low-level keyboard/mouse hooks and lets the AI's own injected input through. A banner at the top of the screen says so for as long as the lock is held ("AI đang điều khiển máy · bàn phím/chuột tạm khoá · Esc ×3 để lấy lại · Ctrl+Alt+Shift+K để dừng"), and a green notice shows when you get control back (there is no tray balloon: the banner itself is the notice). UIA-pattern actions never lock.
+
+Ways out, always on, not configurable:
+
+- **Ctrl+Alt+Shift+K**: STOP (creates the STOP file, releases the lock, blocks every further action).
+- **Esc three times within 1.5 s**: you take over. The lock is released and the tool result says `owner_took_over: true`; the run pauses because the idle check now sees you.
+- **Time limit**: the lock releases by itself after `max_seconds` (default 60, between 5 and 300).
+- It is released in a `finally` and when the server exits.
+- **Ctrl+Alt+Del cannot be blocked** by any program that is not a driver; it still works, and from there you can sign out or end the task.
+
+Settings in `turbo-desktop.toml`:
+
+```toml
+[desktop.input_lock]
+mode = "real_input"     # "off", "real_input" (lock per action), "whole_task" (stay locked between actions)
+max_seconds = 60
+```
+
+Easy and Balanced default to `real_input`, Strict to `whole_task`. The banner cannot be switched off while the lock is held.
+
+## Screen-edge glow
+
+While the AI acts, the edges of every monitor glow orange, like Claude in Chrome does inside the browser, so you know to take your hands off the keyboard. It starts at the first `act`, `batch_actions`, `launch_app` or `window_control` call (pattern or real input), pulses gently, and fades out 3 s after the last action. Read-only calls (`windows_list`, `inspect_compact`, `screenshot`, `system_state`) never show it.
+
+| AI acting | Input locked (frame is solid and brighter, text banner on top) |
+| :--- | :--- |
+| ![glow while acting](docs/glow_acting.png) | ![glow while input is locked](docs/glow_locked.png) |
+
+(Illustrations drawn from the same frame bitmap the tool uses, on a plain background.)
+
+It is one click-through, no-focus, no-taskbar-entry window per monitor, drawn per pixel with UpdateLayeredWindow, per-monitor DPI aware, and its topmost state is re-asserted every second so it survives the taskbar moving and most full-screen apps (a true exclusive-full-screen game can still cover it). With Windows "reduce motion" the frame is steady instead of pulsing; in high-contrast mode it turns yellow. It disappears on STOP, on Esc x3, on exit and if the process dies.
+
+```toml
+[desktop.indicator]
+border = true            # false hides it for pattern-only actions; it still shows while input is locked or real input is sent
+color = "#E0461D"
+```
+
+
 ## Editing the rules
 
 The rules are data: `rules/default_rules.toml` (read the comments at its top). Each rule has an `id`, a `level` (`allow`, `ask`, `deny`) and matchers (process, window title, control name in Vietnamese and English, role, action, ...). The first match wins. A refusal or question always names the rule: `{"rule": "payment", ...}`.
@@ -114,4 +155,4 @@ Tests only touch windows they start themselves (`tests/fixtures/*.exe`, built fr
 
 ## Known limits
 
-See `BENCH.md` and `FIELD_REPORT.md`. In short: custom-drawn controls only get OCR (slow, no values); programs started elevated cannot be driven; apps that restore a previous session on launch (Windows 11 Notepad) will show you your old tabs, so do not launch them on a PC with private tabs open; UIA Invoke on an item that opens a modal dialog can raise a COM error even though it worked.
+See `BENCH.md` and `FIELD_REPORT.md`. In short: custom-drawn controls only get OCR (slow, no values); programs started elevated cannot be driven; apps that reopen your previous files on launch (Windows 11 Notepad, Edge, Chrome, VS Code, Word, Excel; list in `[apps.session_restore]`) make those contents visible to the AI: Easy warns, Balanced asks, Strict asks and uses a clean launch for Notepad (new temp file) and VS Code (`--new-window` on a temp folder); UIA Invoke on an item that opens a modal dialog can raise a COM error even though it worked.

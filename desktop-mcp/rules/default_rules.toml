@@ -19,6 +19,7 @@
 #   keys       regex on the keys being pressed (e.g. Enter)
 #   unnamed    true = a button with no name and no tooltip
 #   multiline  true = a multi-line text box
+#   session_restore  true = the app is in [apps.session_restore] (reopens previous documents)
 #   not_allowlisted  true = the app is not in the app allowlist (see [apps] below)
 #
 # Hard floor (in code, cannot be switched off here): password-field values are never returned or typed,
@@ -28,6 +29,32 @@
 # Apps treated as "known" by not_allowlisted rules. Add yours in turbo-desktop.toml.
 allowlist = ["notepad", "calc", "calculatorapp", "calculator", "mspaint", "paintstudio.view", "explorer",
              "turbo_fixture", "turbo_editor", "turbo_canvas", "systemsettings", "applicationframehost", "snippingtool"]
+
+[input_lock]
+# While the AI uses REAL keyboard/mouse input, your physical keyboard and mouse are paused (no admin needed) and a
+# banner is shown. mode: "off" | "real_input" (lock only around each real-input action) | "whole_task" (stay locked
+# between actions until the AI is quiet for 8 s). Pattern-only (UIA) actions never lock.
+# Hard floor, not configurable: banner while locked; Ctrl+Alt+Shift+K = STOP; Esc x3 within 1.5 s = you take over;
+# max_seconds auto-release (clamped to 5..300); always released on exit. Ctrl+Alt+Del cannot be blocked by anyone.
+max_seconds = 60
+
+[input_lock.mode]
+easy = "real_input"
+balanced = "real_input"
+strict = "whole_task"
+
+[indicator]
+# While the AI acts, the edges of every screen glow (orange frame, gentle pulse) from its first action until 3 s after
+# the last one. While your keyboard/mouse is locked or real input is being sent, the frame is solid and brighter and
+# cannot be turned off (hard floor). With pattern-only actions you may set border = false.
+border = true
+color = "#E0461D"
+
+[apps.session_restore]
+# Apps that reopen the user's previous documents or tabs when launched. Their contents become visible to the model.
+# Easy: launch_app works but returns a warning. Balanced: ask. Strict: ask, and a clean launch is used when one exists
+# (Notepad: a new temp file; VS Code: --new-window on a temp folder).
+processes = ["notepad", "msedge", "chrome", "code", "winword", "excel"]
 
 # ---------------------------------------------------------------- deny zones (all presets)
 
@@ -174,3 +201,11 @@ presets = ["strict"]
 action = ["launch"]
 not_allowlisted = true
 why = "Starting an app that is not on the allowlist."
+
+[[rules]]
+id = "launch-session-restore"
+level = "ask"
+presets = ["balanced", "strict"]
+action = ["launch"]
+session_restore = true
+why = "This app may reopen your previous files or tabs; their contents will be visible to the AI."

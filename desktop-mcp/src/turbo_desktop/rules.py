@@ -30,6 +30,9 @@ class RuleSet:
     preset: str = "easy"
     rules: list = field(default_factory=list)
     allowlist: set = field(default_factory=set)
+    session_restore: set = field(default_factory=set)
+    indicator: dict = field(default_factory=lambda: {"border": True, "color": "#E0461D"})
+    input_lock: dict = field(default_factory=lambda: {"mode": "real_input", "max_seconds": 60})
     source: str = ""
 
 
@@ -77,7 +80,19 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
         rules.append({**r, **({"level": ov["level"]} if "level" in ov else {})})
     allow = {a.lower() for a in default.get("apps", {}).get("allowlist", [])}
     allow |= {a.lower() for a in section.get("apps", {}).get("allowlist", [])}
-    return RuleSet(chosen, rules, allow)
+    sr = {a.lower() for a in default.get("apps", {}).get("session_restore", {}).get("processes", [])}
+    sr |= {a.lower() for a in section.get("apps", {}).get("session_restore", {}).get("processes", [])}
+    il_def, il_user = default.get("input_lock", {}), section.get("input_lock", {})
+    mode = il_user.get("mode") or il_def.get("mode", {}).get(chosen, "real_input")
+    if mode not in ("off", "real_input", "whole_task"):
+        mode = il_def.get("mode", {}).get(chosen, "real_input")
+    secs = il_user.get("max_seconds", il_def.get("max_seconds", 60))
+    rs = RuleSet(chosen, rules, allow, sr)
+    ind_def, ind_user = default.get("indicator", {}), section.get("indicator", {})
+    rs.indicator = {"border": bool(ind_user.get("border", ind_def.get("border", True))),
+                    "color": str(ind_user.get("color", ind_def.get("color", "#E0461D")))}
+    rs.input_lock = {"mode": mode, "max_seconds": max(5, min(300, float(secs)))}
+    return rs
 
 
 _cache: dict = {"key": None, "rs": None}
@@ -129,6 +144,8 @@ def rule_matches(r: dict, ctx: dict, allowlist: set) -> bool:
     if r.get("unnamed") and (ctx.get("help_text") or "").strip():
         return False
     if "multiline" in r and bool(ctx.get("multiline")) != r["multiline"]:
+        return False
+    if "session_restore" in r and bool(ctx.get("session_restore")) != r["session_restore"]:
         return False
     if r.get("not_allowlisted") and proc in allowlist:
         return False

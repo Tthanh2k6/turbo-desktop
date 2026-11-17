@@ -135,6 +135,8 @@ def system_state() -> str:
 
 
 def main():
+    from .border import set_per_monitor_dpi_aware
+    set_per_monitor_dpi_aware()
     import atexit
     atexit.register(lambda: _desktop and _desktop.close_launched())
     mcp.run("stdio")
