@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
-from .summaries import summarize
+from .summaries import render_en, summary_parts
 
 EmitFn = Callable[[dict], Awaitable[None]]
 GateFn = Callable[[dict], Awaitable[bool]]  # True = allowed (after any approval)
@@ -41,7 +41,27 @@ class FakeRunner:
         self.denied: list[dict] = []
         self._task: asyncio.Task | None = None
 
+    def demo_script(self) -> list[dict]:
+        """Slow, realistic stream for screenshots and demos (no desktop is touched)."""
+        def call(tool, key, args, summary, work=0.0, control=None, action=None):
+            return {"type": "tool_call", "tool": tool, "input": {}, "window": "Calculator", "control": control, "action": action,
+                    "work": work, "summary": summary, "sum": {"k": key, "a": args}}
+        return [
+            {"type": "text", "text": "Plan: open Calculator, enter 12.5 + 7, then multiply by 3."},
+            call("mcp__desktop__launch_app", "opened", ["Calculator", "w3"], "Opened Calculator (w3)", work=4.0),
+            {"type": "raw", "event": {"type": "usage_delta", "mid": "m1", "usage": {"input": 1800, "output": 120}}},
+            call("mcp__desktop__inspect_compact", "read_controls", [38], "Read 38 controls", work=0.5),
+            call("mcp__desktop__act", "acted", ["click", "Equals", "pattern"], "Clicked 'Equals' via UIA", work=2.0, control="Equals", action="click"),
+            {"type": "raw", "event": {"type": "usage_delta", "mid": "m2", "usage": {"input": 900, "output": 260}}},
+            {"type": "tool_call", "tool": "mcp__desktop__act", "input": {"action": "click", "name": "Send"}, "window": "Mail - Compose",
+             "control": "Send", "action": "click", "crop_png_b64": TINY_PNG_B64, "summary": "Clicked 'Send' via UIA",
+             "sum": {"k": "acted", "a": ["click", "Send", "pattern"]}},
+            {"type": "final", "text": "The display shows 58.5.", "usage": {"input": 2700, "output": 380, "cost_usd": 0.0041}},
+        ]
+
     def default_script(self, text: str) -> list[dict]:
+        if text.startswith("demo"):
+            return self.demo_script()
         if "hang" in text:
             return [{"type": "text", "text": "working..."}, {"type": "sleep", "s": 60}]
         return [
@@ -75,7 +95,11 @@ class FakeRunner:
                     call = {k: v for k, v in step.items() if k != "type"}
                     if await gate(call):
                         self.executed.append(call)
-                        await emit({"type": "tool_result", "tool": call["tool"], "ok": True, "summary": "ok"})
+                        await asyncio.sleep(step.get("work", 0))   # the tool is "running": lets screenshots catch the acting state
+                        res = {"type": "tool_result", "tool": call["tool"], "ok": True, "summary": step.get("summary", "ok")}
+                        if "sum" in step:
+                            res["sum"] = step["sum"]
+                        await emit(res)
                     else:
                         self.denied.append(call)
                         await emit({"type": "tool_result", "tool": call["tool"], "ok": False,
@@ -237,7 +261,9 @@ class ClaudeRunner:
                 if ev["type"] == "tool_result":
                     tool, inp = self._calls.pop(ev.get("tool_use_id"), (None, {}))
                     ev["tool"] = tool
-                    ev["summary"] = summarize(tool, inp, ev.pop("full", ev.get("summary", "")))
+                    key, args = summary_parts(tool, inp, ev.pop("full", ev.get("summary", "")))
+                    ev["summary"] = render_en(key, args)
+                    ev["sum"] = {"k": key, "a": args}
                 await emit(ev)
                 if ev["type"] == "final":
                     return "done" if ev.get("ok", True) else "failed"

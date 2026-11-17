@@ -39,6 +39,13 @@ def acquire(wait_seconds: float = 3600, poll: float = 30.0, log=print) -> None:
     global _held
     if _held:
         return
+    owner = os.environ.get("TURBO_TEST_LOCK_OWNER")   # set by the wrapper below: a child of the lock holder is covered by it
+    if owner and owner.isdigit():
+        try:
+            if json.loads(LOCK.read_text("utf-8")).get("pid") == int(owner):
+                return
+        except (OSError, ValueError):
+            pass
     end = time.time() + wait_seconds
     while True:
         try:
@@ -84,6 +91,7 @@ if __name__ == "__main__":
     if args and args[0] == "--":
         args = args[1:]
     acquire()
+    os.environ["TURBO_TEST_LOCK_OWNER"] = str(os.getpid())
     try:
         sys.exit(subprocess.call(args))
     finally:

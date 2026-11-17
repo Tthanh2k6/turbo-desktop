@@ -332,8 +332,8 @@ fun Main(activity: FragmentActivity, nowSec: Long, expSec: Long, onUnpair: () ->
     LaunchedEffect(Unit) { Graph.refreshTasks() }
     Box(Modifier.fillMaxSize().then(frame).testTag("frame_$indicator")) {
         Column(Modifier.fillMaxSize()) {
-            Header(stringResource(when (tab) { Tab.TASKS -> R.string.tab_tasks; Tab.LIVE -> R.string.live_title; Tab.APPROVALS -> R.string.appr_title
-                Tab.AUDIT -> R.string.audit_title; Tab.SETTINGS -> R.string.set_title }), routeText(), true)
+            Header(stringResource(when { stopped -> R.string.title_stopped; else -> when (tab) { Tab.TASKS -> R.string.tab_tasks; Tab.LIVE -> R.string.live_title; Tab.APPROVALS -> R.string.appr_title
+                Tab.AUDIT -> R.string.audit_title; Tab.SETTINGS -> R.string.set_title } }), routeText(), true)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.fillMaxSize()) {
                     if (stopped) StopCard()
@@ -406,7 +406,7 @@ fun TasksTab(activity: FragmentActivity, nowSec: Long, expSec: Long) {
             val st = t.optString("status")
             TCard { Column {
                 Text(t.optString("text"), color = Pal.TX, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2)
-                Text(st, color = if (st == "done") Pal.MINT else if (st == "running") Pal.TX2 else Pal.AMBER, fontSize = 13.sp)
+                Text(word(LocalContext.current, st), color = if (st == "done") Pal.MINT else if (st == "running") Pal.TX2 else Pal.AMBER, fontSize = 13.sp)
             } }
         }
         Spacer(Modifier.height(8.dp))
@@ -422,13 +422,15 @@ fun LiveTab() {
     val taskRunning by Graph.taskRunning.collectAsState(); val taskUsage by Graph.taskUsage.collectAsState()
     val shown = events.filter { it.type in setOf("task_started", "text", "tool_call", "tool_result", "approval_request", "approval_resolved", "final", "task_finished", "warning", "hub_alert", "stopped", "input_lock", "taken_over") }.takeLast(60)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val stoppedNow by Graph.stopped.collectAsState()
         when {
+            stoppedNow -> Chip(stringResource(R.string.chip_stopped), Pal.RED, "chipStopped")
             locked || indicator == "input_locked" -> Chip(stringResource(R.string.chip_locked), tag = "chipLocked")
             indicator == "acting" || taskRunning -> Chip(stringResource(R.string.chip_acting), tag = "chipActing")
             else -> Chip(stringResource(R.string.chip_idle), Pal.MINT, "chipIdle")
         }
         if (shown.isEmpty()) Text(stringResource(R.string.live_idle), color = Pal.TX2, fontSize = 14.sp)
-        LazyColumn(Modifier.weight(1f).testTag("events"), reverseLayout = true, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.weight(1f).testTag("events"), reverseLayout = true, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 12.dp, bottom = 4.dp)) {
             items(shown.reversed()) { e ->
                 Row {
                     Text(java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date((e.json.optDouble("ts") * 1000).toLong())), color = Pal.TX3, fontSize = 12.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(end = 10.dp, top = 2.dp))

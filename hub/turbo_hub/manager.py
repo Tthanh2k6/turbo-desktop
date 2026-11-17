@@ -117,7 +117,7 @@ class TaskManager:
         await self.emit({"type": "task_started", "task_id": task.id, "text": text})
         for w in warnings:
             await self.emit({"type": "warning", "task_id": task.id, "text": w})
-        self._runner = self.runner_factory(task) if _takes_task(self.runner_factory) else self.runner_factory()
+        self._runner = self.runner_factory()   # zero-arg factory; passing the Task broke `serve --runner fake` (field bug)
         self._asyncio_task = asyncio.create_task(self._run(task, self._runner))
         return task
 

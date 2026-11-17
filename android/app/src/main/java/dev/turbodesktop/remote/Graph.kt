@@ -18,18 +18,53 @@ import org.json.JSONObject
 /** Tool results arrive as JSON-in-JSON; show a short readable form. */
 fun tidy(s: String): String = s.removePrefix("{\"result\":\"").replace("\\\"", "\"").replace("\\n", " ").replace(Regex("\\s+"), " ").trim().take(110)
 
+/** Localised words for hub codes (decisions, task status) so no English leaks into the Vietnamese UI. */
+fun word(c: android.content.Context, code: String): String {
+    val id = when (code) {
+    "allow" -> R.string.dec_allow; "deny" -> R.string.dec_deny; "timeout" -> R.string.dec_timeout; "stop" -> R.string.dec_stop
+    "done" -> R.string.st_done; "failed" -> R.string.st_failed; "stopped" -> R.string.st_stopped; "running" -> R.string.st_running
+    else -> return code
+    }
+    return c.getString(id)
+}
+
 data class Ev(val seq: Long, val type: String, val json: JSONObject) {
+    /** Structured tool summary ({"k":..,"a":[..]}) rendered from string resources; null when the hub sent only text. */
+    fun summaryText(c: android.content.Context): String? {
+        val s = json.optJSONObject("sum") ?: return null
+        val a = s.optJSONArray("a")
+        fun arg(i: Int) = a?.opt(i)?.toString() ?: ""
+        return when (s.optString("k")) {
+            "opened" -> c.getString(R.string.sum_opened, arg(0), arg(1))
+            "acted" -> c.getString(R.string.sum_acted, c.getString(when (arg(0)) {
+                "click" -> R.string.verb_click; "invoke" -> R.string.verb_invoke; "type" -> R.string.verb_type; "set_value" -> R.string.verb_set_value
+                "select" -> R.string.verb_select; "toggle" -> R.string.verb_toggle; "expand" -> R.string.verb_expand; "focus" -> R.string.verb_focus
+                "scroll" -> R.string.verb_scroll; "press_keys" -> R.string.verb_press_keys; else -> R.string.verb_other }), arg(1),
+                c.getString(if (arg(2) == "input") R.string.via_input else R.string.via_uia))
+            "read_controls" -> c.getString(R.string.sum_read_controls, arg(0).toIntOrNull() ?: 0)
+            "read_window" -> c.getString(R.string.sum_read_window)
+            "ran_steps" -> c.getString(R.string.sum_ran_steps, arg(0).toIntOrNull() ?: 0, arg(1).toIntOrNull() ?: 0)
+            "screenshot" -> c.getString(R.string.sum_screenshot)
+            "listed_windows" -> c.getString(R.string.sum_listed_windows, arg(0).toIntOrNull() ?: 0)
+            "read_state" -> c.getString(R.string.sum_read_state)
+            "waited" -> c.getString(R.string.sum_waited)
+            "wait_timeout" -> c.getString(R.string.sum_wait_timeout)
+            "failed" -> c.getString(R.string.sum_failed, arg(0))
+            else -> arg(0).ifBlank { null }
+        }
+    }
+
     fun line(c: android.content.Context): String {
         fun opt(k: String) = json.optString(k).takeIf { it != "null" && it.isNotBlank() } ?: ""
         return when (type) {
             "task_started" -> c.getString(R.string.ev_task_started, opt("text"))
             "text" -> opt("text")
             "tool_call" -> c.getString(R.string.ev_tool_call, opt("tool"), opt("control").let { if (it.isEmpty()) "" else "[$it]" })
-            "tool_result" -> c.getString(if (json.optBoolean("ok", true)) R.string.ev_tool_ok else R.string.ev_tool_err, tidy(opt("summary")))
+            "tool_result" -> c.getString(if (json.optBoolean("ok", true)) R.string.ev_tool_ok else R.string.ev_tool_err, summaryText(c) ?: tidy(opt("summary")))
             "approval_request" -> c.getString(R.string.ev_approval_request, opt("action"), opt("control"), opt("window"))
-            "approval_resolved" -> c.getString(R.string.ev_approval_resolved, opt("decision"))
-            "final" -> c.getString(R.string.ev_final, opt("text"))
-            "task_finished" -> c.getString(R.string.ev_finished, opt("status"))
+            "approval_resolved" -> c.getString(R.string.ev_approval_resolved, word(c, opt("decision")))
+            "final" -> if (json.optBoolean("ok", true)) c.getString(R.string.ev_final, opt("text")) else c.getString(R.string.ev_tool_err, opt("text"))
+            "task_finished" -> c.getString(R.string.ev_finished, word(c, opt("status")))
             "warning" -> c.getString(R.string.ev_warning, opt("text"))
             "hub_alert" -> c.getString(R.string.ev_alert, opt("what"))
             "stopped" -> c.getString(R.string.ev_stopped)

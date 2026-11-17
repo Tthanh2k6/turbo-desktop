@@ -449,3 +449,42 @@ def test_no_script_or_test_launches_the_owners_editor():
         for line in f.read_text("utf-8").splitlines():
             if word in line.lower():
                 raise AssertionError(f"{f.name} mentions it: {line.strip()[:80]}")
+
+
+def test_default_fake_runner_factory_runs_the_demo_script(tmp_path):
+    """Field bug: `serve --runner fake` failed with "'Task' object is not iterable" (factory got the Task as its script)."""
+    from fastapi.testclient import TestClient
+    from turbo_hub.app import Settings, create_app
+    import time as _t
+    clk = lambda: _t.time()  # noqa: E731
+    app = create_app(Settings(data_dir=tmp_path / "h", clock=clk, loopback_hosts=("127.0.0.1", "testclient")))  # default FakeRunner class
+    with TestClient(app) as http:
+        hub = app.state.hub
+        tok = {"X-Admin-Token": hub.store.admin_token}
+        assert http.post("/admin/tasks", json={"text": "demo: x"}, headers=tok).status_code == 200
+        end = _t.time() + 8
+        while _t.time() < end and not any(e["type"] == "tool_call" for e in hub.manager.events):
+            _t.sleep(0.1)
+        types = [e["type"] for e in hub.manager.events]
+        assert "tool_call" in types and not any(e.get("text", "").startswith("runner error") for e in hub.manager.events)
+
+
+def test_summary_parts_are_language_neutral():
+    from turbo_hub.summaries import summary_parts
+    act = json.dumps({"result": json.dumps({"ok": True, "via": "input"})})
+    assert summary_parts("mcp__desktop__act", {"action": "type", "name": "Name"}, act) == ("acted", ["type", "Name", "input"])
+    tree = json.dumps({"result": "[w1:e1] a" + chr(10) + "[w1:e2] b"})
+    assert summary_parts("mcp__desktop__inspect_compact", {}, tree) == ("read_controls", [2])
+    assert summary_parts("x", {}, "plain words")[0] == "text"
+
+
+def test_lock_wrapper_child_is_not_blocked_by_its_parent(tmp_path, monkeypatch):
+    """Field bug: `with_lock.py -- pytest` deadlocked because conftest asked for the lock its own parent held."""
+    import subprocess, sys
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    lock = tmp_path / "t.lock"
+    code = "import sys;sys.path.insert(0,r'%s');import with_lock;with_lock.acquire(wait_seconds=3,poll=0.2);print('child ok')" % scripts
+    env = {**__import__("os").environ, "TURBO_TEST_LOCK": str(lock)}
+    r = subprocess.run([sys.executable, str(scripts / "with_lock.py"), "--", sys.executable, "-c", code], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert "child ok" in r.stdout, r.stdout + r.stderr
