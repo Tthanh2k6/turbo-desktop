@@ -38,6 +38,40 @@ Goal: let an AI agent drive Windows desktop apps as fast and cheaply as turbo-br
   - Screen text is data, not instructions: wrap page/control text in content boundary markers like turbo.
 - Key storage on PC: hub private key and paired-device list encrypted with Windows DPAPI (CurrentUser). Honest limit: malware running as the same Windows user can still use DPAPI; this only stops copying the file to another machine.
 
+## Community direction (owner, 17/11 afternoon)
+
+Audience: many users, from beginners to IT pros. The owner's strict setup becomes one preset.
+- Config-driven: one commented `turbo-desktop.toml` plus a shipped `defaults.toml`, with rules in data files. Code stays plain, with no deep frameworks.
+- Presets are picked in a first-run wizard, and every item can be switched individually afterwards:
+  - **Easy (default):** local only, pairing optional, 12 h session, no TOTP, approval only for permanent delete, payment, uninstall and Windows security settings, deny zone = password fields.
+  - **Balanced:** LAN or Tailscale, 2 h, TOTP on reopen, approval for send, delete, pay, install and terminal, deny zones add password managers and banking.
+  - **Strict (owner):** biometric + TOTP, 2 h, full list, all deny zones, Cloudflare Access when tunnelled.
+- Hard floor in every preset:
+  - STOP;
+  - audit log;
+  - password values never reach the model;
+  - non-localhost requests only from a paired device with a valid signature;
+  - pairing only locally.
+- Pluggable agent command (Claude Code default; Codex, Gemini CLI or a local model via a template) and connection list (`local`, `lan`, `tailscale`, `cloudflare`).
+- desktop-mcp works standalone in any MCP client. With no phone, approvals fall back to a local Windows prompt.
+- i18n vi/en. Android UI: SVG mockups in `design/mockups/` are reviewed before Compose code.
+- The "always on" items in the security model above apply to Strict. Lower presets keep only the hard floor plus what the preset lists.
+
+## hub + android v0: what was built (17/11)
+
+- Wire format (hub `crypto.py`, Android `Protocol.kt`, shared test vectors): ECDSA P-256 over `METHOD
+PATH?QUERY
+SHA256(body)
+TS
+NONCE`; replies and SSE events signed by the hub key pinned at pairing; 60 s window; in-memory nonces plus "nothing signed before hub start".
+- Two phone keys: a plain Keystore key for ordinary requests and a biometric-gated one (30 s window) for pairing, opening a session and answering approvals. Biometric is a preset option (Strict).
+- Session = signed `session/start` + TOTP (Google Authenticator, RFC 6238, no reuse) when the preset says so; 2 h or 12 h; reopened from anywhere without a QR. Pairing only locally.
+- Lockout (5 failures / 10 min, 15 min), 64 KB body limit, no unauthenticated endpoint except local pairing; tunnel headers are refused for pairing and admin.
+- Approvals: desktop-mcp classifies and asks via files in `desktop-state/`, the hub relays to the phone; hub categories are the fallback (`approval.engine`). STOP file, RELEASE (take over), `input_lock.json` and `indicator.json` are the hub/desktop-mcp contract.
+- One long-lived agent process (stream-json in/out), in a job object so it dies with the hub; pluggable command template.
+- Wake-on-LAN relay in `relay/` (stdlib only, own pairing list). Config: `hub/turbo_hub/defaults.toml` + presets.
+- Android UI is intentionally not built: `design/mockups/` first, then Compose. Hub, client, Keystore, service, notifications, i18n strings exist.
+
 ## Out of scope for v0
 
 Remote control of a different PC, iOS, controlling the phone itself, multi-user.

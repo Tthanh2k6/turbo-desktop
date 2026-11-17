@@ -332,7 +332,7 @@ fun Main(activity: FragmentActivity, nowSec: Long, expSec: Long, onUnpair: () ->
     LaunchedEffect(Unit) { Graph.refreshTasks() }
     Box(Modifier.fillMaxSize().then(frame).testTag("frame_$indicator")) {
         Column(Modifier.fillMaxSize()) {
-            Header(stringResource(when { stopped -> R.string.title_stopped; else -> when (tab) { Tab.TASKS -> R.string.tab_tasks; Tab.LIVE -> R.string.live_title; Tab.APPROVALS -> R.string.appr_title
+            Header(stringResource(when { stopped -> R.string.title_stopped; else -> when (tab) { Tab.TASKS -> R.string.tab_tasks; Tab.LIVE -> if (running) R.string.live_title else R.string.tab_live; Tab.APPROVALS -> R.string.appr_title
                 Tab.AUDIT -> R.string.audit_title; Tab.SETTINGS -> R.string.set_title } }), routeText(), true)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.fillMaxSize()) {
