@@ -36,10 +36,14 @@ class Prefs(ctx: Context) {
     var relayPaired: Boolean get() = sp.getBoolean("relayPaired", false); set(v) = sp.edit().putBoolean("relayPaired", v).apply()
     var preset: String get() = s("preset"); set(v) = put("preset", v)
     var onboarded: Boolean get() = sp.getBoolean("onboarded", false); set(v) = sp.edit().putBoolean("onboarded", v).apply()
+    var needsTotp: Boolean get() = sp.getBoolean("needsTotp", true); set(v) = sp.edit().putBoolean("needsTotp", v).apply()
+    var needsBiometric: Boolean get() = sp.getBoolean("needsBiometric", true); set(v) = sp.edit().putBoolean("needsBiometric", v).apply()
+    var totpEnrollPending: Boolean get() = sp.getBoolean("totpEnrollPending", false); set(v) = sp.edit().putBoolean("totpEnrollPending", v).apply()
+    var lang: String get() = s("lang"); set(v) = put("lang", v)
     val paired get() = hubKey.isNotBlank() && deviceId.isNotBlank()
 
     fun unpairLocal() {
-        sp.edit().remove("hubKey").remove("deviceId").remove("sessionId").remove("sessionExp").apply()
+        sp.edit().remove("hubKey").remove("deviceId").remove("sessionId").remove("sessionExp").remove("totpEnrollPending").apply()
     }
 }
 
@@ -151,6 +155,8 @@ class HubClient(
                 }
                 prefs.hubKey = got
                 prefs.deviceId = j.getString("deviceId")
+                HubJson.needs(j).let { prefs.needsTotp = it.totp; prefs.needsBiometric = it.biometric }
+                prefs.totpEnrollPending = j.optBoolean("totpEnroll", false)
                 prefs.urls = urls.ifEmpty { listOf(Protocol.transportName(baseUrl) to baseUrl) }.let { l ->
                     if (l.any { it.second == baseUrl }) l else listOf(Protocol.transportName(baseUrl) to baseUrl) + l }
                 got

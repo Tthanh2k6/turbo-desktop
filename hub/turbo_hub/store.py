@@ -111,3 +111,11 @@ class SecretStore:
         with self._lock:
             self.totp_last_step = step
             self._write_totp(self.totp_secret, step)
+
+    def rotate_totp(self) -> bytes:
+        """New secret, step counter back to 0: the old Authenticator entry stops working at once."""
+        secret = secrets.token_bytes(20)
+        with self._lock:
+            self.totp_secret, self.totp_last_step = secret, 0
+            self._write_totp(secret, 0)
+        return secret

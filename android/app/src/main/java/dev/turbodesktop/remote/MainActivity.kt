@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
  * an adb hook (`dbg_action`) so the hub/app plumbing can be exercised on the emulator without a UI.
  */
 class MainActivity : FragmentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) = super.attachBaseContext(AppLang.wrap(newBase))
+
     private val askNotif = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {

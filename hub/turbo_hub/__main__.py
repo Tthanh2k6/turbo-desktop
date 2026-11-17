@@ -31,6 +31,9 @@ TEXT = {
         "ask_phone": "Bạn sẽ ghép điện thoại qua cùng mạng Wi-Fi? [c/k]",
         "saved": "Đã lưu cài đặt vào",
         "next": "Tiếp theo: chạy `python -m turbo_hub serve`, rồi `python -m turbo_hub run \"mở Máy tính và tính 2 + 2\"`.",
+        "totp_key": "Khoá Google Authenticator (nhập tay nếu không quét được):",
+        "totp_phone": "Điện thoại cũng lấy được khoá này trong {n} phút: Cài đặt > Xác thực 2 bước.",
+        "totp_off": "Mức bảo mật hiện tại không dùng mã 2FA.",
         "approve": "Cần duyệt: {action} \"{control}\" trong \"{window}\". Cho phép? [c/k] ",
     },
     "en": {
@@ -41,6 +44,9 @@ TEXT = {
         "ask_phone": "Will you pair a phone over the same Wi-Fi? [y/n]",
         "saved": "Saved settings to",
         "next": "Next: run `python -m turbo_hub serve`, then `python -m turbo_hub run \"open Calculator and compute 2 + 2\"`.",
+        "totp_key": "Google Authenticator key (type it in if you cannot scan):",
+        "totp_phone": "The phone app can also fetch this key within {n} minutes: Settings > 2FA.",
+        "totp_off": "The current security level does not use a 2FA code.",
         "approve": "Approval needed: {action} \"{control}\" in \"{window}\". Allow? [y/n] ",
     },
 }
@@ -190,6 +196,28 @@ def cmd_run(a, dd: Path) -> None:
         time.sleep(0.5)
 
 
+def cmd_totp(a, dd: Path, token: str, cfg: dict) -> None:
+    """Show (or rotate) the Authenticator key and open the enrolment window so the phone can fetch it too."""
+    t = TEXT[a.lang]
+    try:
+        info = admin("POST", "/admin/totp", a.port, token, {"rotate": bool(a.rotate)})
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 409:
+            print(t["totp_off"])
+            return
+        raise
+    print(t["totp_key"])
+    print("  " + " ".join(info["secret"][i:i + 4] for i in range(0, len(info["secret"]), 4)) + "\n")
+    png = dd / "totp_qr.png"
+    show_qr(info["otpauth"], png)
+    if os.name == "nt" and os.environ.get("TURBO_NO_OPEN") != "1":
+        try:
+            os.startfile(str(png))  # type: ignore[attr-defined]
+        except OSError:
+            pass
+    print("\n" + t["totp_phone"].format(n=max(1, int(info["expiresIn"]) // 60)))
+
+
 def main(argv: list[str] | None = None) -> None:
     for stream in (sys.stdout, sys.stderr):   # Vietnamese text in a cp1252 console or a pipe must not crash setup
         try:
@@ -212,6 +240,8 @@ def main(argv: list[str] | None = None) -> None:
     sv.add_argument("--preset", choices=cfgmod.PRESETS, help="override the preset for this run")
     r = sub.add_parser("run")
     r.add_argument("task")
+    tp = sub.add_parser("totp")
+    tp.add_argument("--rotate", action="store_true", help="make a new secret; the old Authenticator entry stops working")
     for name in ("pair", "devices", "stop", "resume", "verify-audit"):
         sub.add_parser(name)
     rv = sub.add_parser("revoke")
@@ -270,6 +300,8 @@ def main(argv: list[str] | None = None) -> None:
             print("\n2) Add this to Google Authenticator (needed to open each session):\n")
             show_qr(otp, dd / "totp_qr.png")
         print(f"\nQR images saved in {dd}")
+    elif a.cmd == "totp":
+        cmd_totp(a, dd, token, cfg)
     elif a.cmd == "devices":
         print(json.dumps(admin("GET", "/admin/devices", a.port, token), indent=2))
     elif a.cmd == "revoke":

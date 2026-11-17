@@ -92,6 +92,7 @@ class State:
     locked_until: dict[str, float] = field(default_factory=dict)
     task_tokens: dict[str, str] = field(default_factory=dict)
     started: int = 0
+    totp_window_exp: float = 0.0   # enrolment window: the phone may fetch the otpauth secret once until then
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -292,6 +293,28 @@ def create_app(settings: Settings) -> FastAPI:
                 "otpauth": totp.otpauth_uri(store.totp_secret) if settings.totp_required else None,
                 "needs": {"totp": settings.totp_required, "biometric": settings.biometric_required}}
 
+    def open_enroll_window() -> int:
+        st.totp_window_exp = now() + settings.pair_code_ttl
+        audit.append("totp_enroll_opened", {"expires_in": settings.pair_code_ttl})
+        return int(settings.pair_code_ttl)
+
+    @app.post("/admin/totp")
+    async def admin_totp(request: Request):
+        require_admin(request)
+        if not settings.totp_required:
+            raise HTTPException(409, "totp is off for this preset")
+        try:
+            raw = await request.body()
+            rotate = bool(json.loads(raw).get("rotate")) if raw.strip() else False
+        except (ValueError, AttributeError):
+            raise HTTPException(400, "bad json")
+        if rotate:
+            store.rotate_totp()
+            audit.append("totp_rotated", {})
+        expires = open_enroll_window()
+        return {"otpauth": totp.otpauth_uri(store.totp_secret), "secret": totp.b32(store.totp_secret),
+                "expiresIn": expires}
+
     @app.post("/admin/pairing")
     async def admin_pairing(request: Request):
         require_admin(request)
@@ -406,12 +429,38 @@ def create_app(settings: Settings) -> FastAPI:
         dev = store.add_device(name, pub, now(), auth_pub)
         audit.append("paired", {"device": dev.id, "name": dev.name})
         await manager.emit({"type": "paired", "device": dev.id, "name": dev.name})
-        return reply(Ctx(dev.id, nonce, ts, "/pair"), {"deviceId": dev.id, "hubPub": store.hub_pub_b64})
+        enroll = settings.totp_required
+        if enroll:
+            open_enroll_window()   # pairing is local and physical: the phone may now fetch the Authenticator key
+        return reply(Ctx(dev.id, nonce, ts, "/pair"),
+                     {"deviceId": dev.id, "hubPub": store.hub_pub_b64, "totpEnroll": enroll,
+                      "needs": {"totp": settings.totp_required, "biometric": settings.biometric_required}})
 
     @app.get("/hello")
     async def hello(ctx: Ctx = Depends(signed)):
         """Signed liveness check without a session (used while waking the PC and to pick a transport)."""
         return reply(ctx, {"ok": True, "now": int(now())})
+
+    @app.get("/policy")
+    async def get_policy(ctx: Ctx = Depends(signed)):
+        """What the app must ask for before it can open a session (no session needed)."""
+        return reply(ctx, {"preset": settings.policy.get("preset", ""),
+                           "needs": {"totp": settings.totp_required, "biometric": settings.biometric_required},
+                           "sessionHours": settings.policy.get("sessionHours", settings.session_ttl / 3600)})
+
+    def not_proxied(request: Request) -> None:
+        if via_proxy(request):
+            raise HTTPException(403, "totp enrolment is local only (not through a tunnel)")
+
+    @app.get("/totp/enroll")
+    async def totp_enroll(_: None = Depends(not_proxied), ctx: Ctx = Depends(strong)):
+        if not settings.totp_required or st.totp_window_exp <= now():
+            st.totp_window_exp = 0.0
+            return reply(ctx, {"detail": "enrollment closed"}, 403)
+        st.totp_window_exp = 0.0   # one-shot
+        audit.append("totp_enroll_fetched", {"device": ctx.device_id})
+        return reply(ctx, {"otpauth": totp.otpauth_uri(store.totp_secret), "secret": totp.b32(store.totp_secret),
+                           "issuer": "turbo-desktop", "account": "pc", "digits": totp.DIGITS, "period": totp.PERIOD})
 
     # ------------------------------------------------------------ session
     @app.post("/session/start")

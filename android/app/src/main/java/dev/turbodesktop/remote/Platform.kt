@@ -23,6 +23,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class TurboApp : Application() {
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(AppLang.wrap(base))
+
     override fun onCreate() {
         super.onCreate()
         Graph.init(this)
@@ -144,5 +146,54 @@ object BatteryGuide {
 
     fun open(ctx: Context, intent: Intent) {
         try { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+    }
+}
+
+/** Opens an otpauth:// link in an authenticator app. False when none is installed. */
+fun openInAuthenticator(ctx: Context, otpauth: String): Boolean = try {
+    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(otpauth)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    true
+} catch (e: android.content.ActivityNotFoundException) { false }
+
+/** Copies a secret to the clipboard; on Android 13+ marks it sensitive so the preview toast and keyboard history hide it. */
+fun copySensitive(ctx: Context, label: String, text: String) {
+    val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+    val clip = android.content.ClipData.newPlainText(label, text)
+    if (Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = android.os.PersistableBundle().apply { putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true) }
+    }
+    cm.setPrimaryClip(clip)
+}
+
+/**
+ * Per-app language. "" = follow the system. API 33+ uses the platform LocaleManager (also shown in system Settings);
+ * on API 29-32 the choice lives in prefs and [wrap] applies it from attachBaseContext (the UI must recreate the activity after [set]).
+ */
+object AppLang {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("turbo", Context.MODE_PRIVATE)
+
+    fun current(ctx: Context): String =
+        if (Build.VERSION.SDK_INT >= 33) {
+            val l = ctx.getSystemService(android.app.LocaleManager::class.java).applicationLocales
+            if (l.isEmpty) "" else l[0].language
+        } else prefs(ctx).getString("lang", "") ?: ""
+
+    fun set(ctx: Context, tag: String) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            ctx.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                if (tag.isBlank()) android.os.LocaleList.getEmptyLocaleList() else android.os.LocaleList.forLanguageTags(tag)
+        } else prefs(ctx).edit().putString("lang", tag).apply()
+    }
+
+    /** For attachBaseContext. A no-op on API 33+, where the platform applies the choice. */
+    fun wrap(base: Context): Context {
+        if (Build.VERSION.SDK_INT >= 33) return base
+        val tag = prefs(base).getString("lang", "") ?: ""
+        if (tag.isBlank()) return base
+        val loc = java.util.Locale.forLanguageTag(tag)
+        java.util.Locale.setDefault(loc)
+        val conf = android.content.res.Configuration(base.resources.configuration)
+        conf.setLocale(loc)
+        return base.createConfigurationContext(conf)
     }
 }

@@ -119,6 +119,10 @@ object Graph {
     val dayUsage = MutableStateFlow(Usage())
     val needAccessLogin = MutableStateFlow(false)
     val wakeState = MutableStateFlow("")
+    /** What the hub asks for before a session opens. Persisted; set at pairing, refreshed by [refreshPolicy]. */
+    val needs = MutableStateFlow(Needs(totp = true, biometric = true))
+    /** True right after pairing when the hub opened its enrolment window: the UI offers "Add to Authenticator". */
+    val totpEnrollPending = MutableStateFlow(false)
     private var conn: Job? = null
     private var lastSeq = 0L
 
@@ -132,6 +136,8 @@ object Graph {
         relay = RelayClient(prefs, plain)
         sessionExp.value = prefs.sessionExp
         sessionId.value = prefs.sessionId
+        needs.value = Needs(prefs.needsTotp, prefs.needsBiometric)
+        totpEnrollPending.value = prefs.totpEnrollPending
         Notifier.createChannels(app)
     }
 
@@ -155,6 +161,8 @@ object Graph {
             val p = Protocol.parsePairText(text); urls = p.urls; Triple(p.url, p.hubKey, p.code)
         } else Triple(urlManual!!.trim().trimEnd('/'), null, codeManual!!.trim())
         val got = client.pair(url, key, code, app.getString(R.string.device_name_fmt, Build.MANUFACTURER, Build.MODEL), urls)
+        needs.value = Needs(prefs.needsTotp, prefs.needsBiometric)
+        totpEnrollPending.value = prefs.totpEnrollPending
         status.value = app.getString(R.string.st_paired, Protocol.fingerprint(got))
         true
     } catch (e: Exception) { fail(e); false }
@@ -173,8 +181,38 @@ object Graph {
             sessionId.value = prefs.sessionId; sessionExp.value = prefs.sessionExp; stopped.value = j.optBoolean("stopped")
             status.value = app.getString(R.string.st_session_open)
             HubService.start(app); startConnection(); true
-        } else { status.value = app.getString(R.string.st_session_fail, r.status); false }
+        } else {
+            // the hub wants a code this app did not know about (e.g. the preset changed on the PC)
+            if (r.status == 401 && r.body.contains("totp required") && !needs.value.totp) setNeeds(needs.value.copy(totp = true))
+            status.value = app.getString(R.string.st_session_fail, r.status); false
+        }
     } catch (e: Exception) { fail(e); false }
+
+    private fun setNeeds(n: Needs) { needs.value = n; prefs.needsTotp = n.totp; prefs.needsBiometric = n.biometric }
+
+    /** Signed GET /policy (no session): learns whether the 2FA code and the fingerprint are required. */
+    suspend fun refreshPolicy(): Boolean = try {
+        val r = client.call("GET", "/policy", session = false)
+        if (r.status == 200) { setNeeds(HubJson.needs(r.json())); true } else false
+    } catch (e: Exception) { fail(e); false }
+
+    const val ENROLL_CLOSED_MSG = "Enrollment window closed. On the PC run: python -m turbo_hub totp"
+
+    /**
+     * Fetches the Authenticator key. The hub allows it once, only while its enrolment window is open (right after
+     * pairing or after `python -m turbo_hub totp`). Caller must have run BiometricPrompt within the last 30 s.
+     */
+    suspend fun fetchTotpEnrollment(): TotpEnroll? = try {
+        val r = client.call("GET", "/totp/enroll", strong = true, session = false)
+        if (r.status == 200) {
+            totpEnrollPending.value = false; prefs.totpEnrollPending = false
+            HubJson.totpEnroll(r.json())
+        } else {
+            if (r.status == 403) { totpEnrollPending.value = false; prefs.totpEnrollPending = false }
+            status.value = if (r.status == 403) ENROLL_CLOSED_MSG else app.getString(R.string.st_error_code, r.status)
+            null
+        }
+    } catch (e: Exception) { fail(e); null }
 
     // ---------------------------------------------------------------- connection
     fun startConnection() {

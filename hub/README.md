@@ -60,7 +60,11 @@ Các mục này luôn bật ở mọi mức vì chúng không tốn gì của b�
 
 In mã QR (hết hạn sau 5 phút) và một dòng `turbo-pair:...` để dán nếu không quét được. Mở app Turbo Remote, quét. App tạo khoá trong Android Keystore (không xuất ra được). Hai bên đối chiếu 5 nhóm ký tự "mã hub" để chắc chắn đúng máy.
 
-Mức Cân bằng/Chặt: lệnh `pair` in thêm một mã QR thứ hai, thêm vào **Google Authenticator**. Mỗi lần mở phiên (hết 2 giờ) app hỏi mã 6 số rồi hỏi vân tay. Không cần quét lại QR, không cần ở gần máy tính. Một mã chỉ dùng được một lần.
+Mã 2FA chỉ có ở mức Cân bằng và Chặt; mức Thoáng không hỏi mã và app không hiện ô nhập. App biết điều này qua `GET /policy` và câu trả lời lúc ghép.
+
+Khi cần 2FA, ghép xong hub mở "cửa sổ lấy khoá" trong 5 phút (bằng thời hạn mã ghép). Trong lúc đó, ngay trên điện thoại, vào Cài đặt > 2FA bấm **Thêm vào Authenticator** (hoặc sao chép khoá, hoặc gõ khoá chữ). Khoá chỉ tải được một lần, cần cả hai khoá thiết bị (có vân tay) và không đi qua tunnel. Cũng có thể quét mã QR thứ hai mà lệnh `pair` in ra. Mỗi lần mở phiên (hết 2 giờ) app hỏi mã 6 số rồi hỏi vân tay. Một mã chỉ dùng được một lần.
+
+Mất mục Authenticator hoặc đổi điện thoại: chạy `python -m turbo_hub totp` (hiện lại khoá, mở lại cửa sổ 5 phút cho điện thoại) hoặc `python -m turbo_hub totp --rotate` (tạo khoá mới, mục cũ hết tác dụng ngay).
 
 Thu hồi một điện thoại: `python -m turbo_hub devices` rồi `python -m turbo_hub revoke <id>`.
 

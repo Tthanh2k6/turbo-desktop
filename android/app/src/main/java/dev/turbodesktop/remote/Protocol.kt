@@ -76,3 +76,21 @@ interface Signer {
     val publicKeyB64: String
     fun sign(message: ByteArray): String
 }
+
+/** What the hub requires before a session opens; the app hides the 2FA field when [totp] is false. */
+data class Needs(val totp: Boolean, val biometric: Boolean)
+
+/** The Authenticator key as the hub sends it from GET /totp/enroll. [secret] is base32 without padding. */
+data class TotpEnroll(val otpauth: String, val secret: String, val issuer: String, val account: String)
+
+/** Parsers for hub replies, kept pure JVM so they are unit-tested. */
+object HubJson {
+    /** Missing "needs" (older hub) means "ask for everything": the safe default. */
+    fun needs(o: org.json.JSONObject?): Needs {
+        val n = o?.optJSONObject("needs") ?: return Needs(totp = true, biometric = true)
+        return Needs(n.optBoolean("totp", true), n.optBoolean("biometric", true))
+    }
+
+    fun totpEnroll(o: org.json.JSONObject): TotpEnroll =
+        TotpEnroll(o.getString("otpauth"), o.getString("secret"), o.optString("issuer", "turbo-desktop"), o.optString("account", "pc"))
+}
