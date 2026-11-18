@@ -26,6 +26,8 @@ Read `DESIGN.md`, `design/LIVE_V3.md`, this guide, the relevant `CODEBASE.md` se
 - Never run test suites or field scripts in parallel; every run must acquire the shared lock `%TEMP%\turbo-desktop-test.lock`.
 - Do not change signing, canonical strings, TOTP, or session code (`hub/turbo_hub/crypto.py`, `hub/turbo_hub/totp.py`, `hub/turbo_hub/app.py`, `Protocol.kt`, `HubClient.kt`) without updating and running tests on both sides and regenerating shared vectors (`hub/scripts/gen_vectors.py`).
 - Do not read, log, or commit `.env` files or real credentials.
+- Every `claude` process the hub starts must carry `TURBO_HUB_AGENT=1` (`runners.build_claude_env`) so the owner's PermissionRequest hook skips it; `desktop-mcp/server.py` strips it before launching apps.
+- Files in the desktop state dir are shared with another process: write with `bridge.write_atomic` / `replace_retry`, delete with `unlink_retry`, and never let an `OSError` escape `DesktopBridge.step` or `StateBridge.tick` (one escaped error once stopped the hub's bridge loop for good).
 
 ## 4. Documentation sync
 
@@ -33,7 +35,7 @@ Update `CODEBASE.md` sections 2 to 7 and append to section 9 for any change to r
 
 ## 5. Verification
 
-- Hub and relay tests: `hub\.venv\Scripts\python.exe hub\scripts\with_lock.py -- hub\.venv\Scripts\python.exe -m pytest hub\tests -q` and `hub\.venv\Scripts\python.exe -m pytest relay\tests -q`.
-- `desktop-mcp` tests (default `TURBO_DESKTOP_NO_INPUT=1`; set `$env:TURBO_DESKTOP_REAL_INPUT="1"` only when the PC is idle to run real-input tests, and rebuild C# fixtures with `powershell -File desktop-mcp\tests\fixtures\build.ps1` if `.cs` files change): `desktop-mcp\.venv\Scripts\python.exe -m pytest desktop-mcp\tests -q`.
+- Hub and relay tests (the test `conftest.py` files take the shared lock themselves; wrapping pytest in `with_lock.py` deadlocks): `cd hub; .venv\Scripts\python.exe -m pytest tests -q` and `hub\.venv\Scripts\python.exe -m pytest relay\tests -q`.
+- `desktop-mcp` tests (default `TURBO_DESKTOP_NO_INPUT=1`; set `$env:TURBO_DESKTOP_REAL_INPUT="1"` only when the PC is idle to run real-input tests, and rebuild C# fixtures with `powershell -File desktop-mcp\tests\fixtures\build.ps1` if `.cs` files change): `cd desktop-mcp; .venv\Scripts\python.exe -m pytest tests -q` (its conftest also takes the shared lock).
 - Android unit tests and release APK (`JAVA_HOME` set to JDK 17): `cd android && .\gradlew.bat :app:testDebugUnitTest :app:assembleRelease`.
 - Emulator and benchmark scripts: `hub\.venv\Scripts\python.exe hub\scripts\emulator_shots.py`, `hub\.venv\Scripts\python.exe hub\scripts\emulator_shots_v3.py`, `hub\.venv\Scripts\python.exe hub\scripts\emulator_run.py`, and `desktop-mcp\.venv\Scripts\python.exe desktop-mcp\tests\field\bench.py`.

@@ -748,3 +748,125 @@ def test_mcp_config_fixed_path_and_async_kill(tmp_path, monkeypatch):
     assert len(to_thread_calls) == 1 and to_thread_calls[0][1][0][:2] == ["taskkill", "/PID"]
     assert not p1.exists()
     monkeypatch.setattr(runners.asyncio, "to_thread", orig_to_thread)
+
+
+# ---------------------------------------------------------------- field bug 18/11: state left "working" after the end
+
+class _BoomRunner:
+    async def run(self, task_id, text, emit, gate):
+        await asyncio.sleep(0.05)
+        raise RuntimeError("runner crashed")
+
+    async def kill(self):
+        pass
+
+
+@pytest.mark.parametrize("how", ["done", "failed", "crash", "stop"])
+def test_every_way_a_task_ends_clears_the_pc_state(tmp_path, how):
+    """Done, failed, crashed runner or STOP: task_active.json goes away and the hub stops reporting a lock."""
+    from fastapi.testclient import TestClient
+    from turbo_hub.app import Settings, create_app
+    state = tmp_path / "state"
+
+    class Clk:
+        t = time.time()
+        def __call__(self):
+            return self.t
+
+    clk = Clk()
+    scripts = {"done": [{"type": "sleep", "s": 0.3}, {"type": "final", "text": "ok"}],
+               "failed": [{"type": "sleep", "s": 0.3}, {"type": "final", "text": "no", "ok": False}],
+               "stop": [{"type": "sleep", "s": 30}]}
+    factory = (lambda: _BoomRunner()) if how == "crash" else (lambda: FR2(scripts[how]))
+    app = create_app(Settings(data_dir=tmp_path / "h", clock=clk, runner_factory=factory,
+                              approval_engine="desktop-mcp", desktop_state_dir=state,
+                              loopback_hosts=("127.0.0.1", "testclient")))
+    with TestClient(app) as http:
+        hub = app.state.hub
+        info = http.post("/admin/pairing", headers={"X-Admin-Token": hub.store.admin_token}).json()
+        d = DevClientCls(http, hub_pub=info["hubKey"], clock=clk)
+        assert d.pair(info["code"]).status_code == 200
+        assert d.start_session(hub.store.totp_secret).status_code == 200
+        ta_file, lock_file = state / "task_active.json", state / "input_lock.json"
+
+        assert d.request("POST", "/tasks", {"text": "work"}).status_code == 200
+        assert ta_file.exists()
+        # desktop-mcp reports the whole-task lock while the task runs
+        lock_file.write_text(json.dumps({"locked": True, "mode": "whole_task", "since": clk.t, "reason": "remote_task"}), "utf-8")
+        end = time.time() + 3
+        while time.time() < end and not hub.manager.input_lock.get("locked"):
+            time.sleep(0.03)
+        assert hub.manager.input_lock["locked"]
+
+        if how == "stop":
+            assert d.request("POST", "/stop", {}).status_code == 200
+        end = time.time() + 5
+        while time.time() < end and hub.manager.running_task() is not None:
+            time.sleep(0.03)
+        assert hub.manager.running_task() is None
+        assert not ta_file.exists()
+
+        # desktop-mcp died before writing "unlocked": the hub stops reporting the lock once the end is 20 s old
+        clk.t += 21
+        end = time.time() + 3
+        while time.time() < end and hub.manager.input_lock.get("locked"):
+            time.sleep(0.03)
+        assert hub.manager.input_lock["locked"] is False
+        if how == "stop":
+            d.request("POST", "/resume", {})
+
+
+class _Mgr:
+    def __init__(self):
+        self.stopped = self.paused = False
+        self.indicator_external = False
+        self.task = None
+        self.locks = []
+
+    def running_task(self):
+        return self.task
+
+    async def set_input_lock(self, s):
+        self.locks.append(s)
+
+    async def set_indicator(self, s):
+        pass
+
+
+def test_bridge_survives_a_failing_step_and_windows_sharing_errors(tmp_path, monkeypatch):
+    """One PermissionError (desktop-mcp had the file open) used to end DesktopBridge.run for good."""
+    from types import SimpleNamespace
+    from turbo_hub import bridge as br
+    m = _Mgr()
+    b = br.DesktopBridge(m, tmp_path, time.time)
+
+    # write_task_active retries os.replace while the file is held open, then succeeds
+    real_replace, fails = br.os.replace, {"n": 3}
+    def flaky_replace(a, c):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise PermissionError(5, "Access is denied")
+        return real_replace(a, c)
+    monkeypatch.setattr(br.os, "replace", flaky_replace)
+    task = SimpleNamespace(id="t1", started_at=time.time(), source="phone")
+    b.write_task_active(task)
+    assert json.loads((tmp_path / "task_active.json").read_text("utf-8"))["task"] == "t1"
+
+    # a leftover task_active.json with no running task is removed by the next step
+    asyncio.run(b.step())
+    assert not (tmp_path / "task_active.json").exists()
+
+    # an exception inside step() is logged and the loop goes on
+    calls = {"n": 0}
+    async def bad_step():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(5, "Access is denied")
+    b.step = bad_step
+
+    async def drive():
+        t = asyncio.create_task(b.run())
+        await asyncio.sleep(0.35)
+        t.cancel()
+    asyncio.run(drive())
+    assert calls["n"] >= 2

@@ -13,7 +13,45 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
+import sys
+import time
 from pathlib import Path
+
+# Windows refuses os.replace / unlink while another process has the file open (desktop-mcp reads these files every
+# second). Field bug 18/11: one PermissionError from write_task_active killed DesktopBridge.run, so the hub stopped
+# reading input_lock.json and the phone kept showing the frame, STOP and "keyboard/mouse locked" after the task ended.
+RETRIES, RETRY_SLEEP = 20, 0.02
+
+
+def replace_retry(tmp: Path, dst: Path) -> None:
+    for i in range(RETRIES):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if i == RETRIES - 1:
+                raise
+            time.sleep(RETRY_SLEEP)
+
+
+def write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, "utf-8")
+    replace_retry(tmp, path)
+
+
+def unlink_retry(path: Path) -> bool:
+    """True when the file is gone afterwards."""
+    for i in range(RETRIES):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            time.sleep(RETRY_SLEEP)
+        except OSError:
+            return not path.exists()
+    return not path.exists()
 
 
 class DesktopBridge:
@@ -23,6 +61,8 @@ class DesktopBridge:
         self.remote_task = remote_task
         self.max_task_minutes = max_task_minutes
         self._last_hb: float = 0.0
+        self._ended_at: float | None = None
+        self._last_error = ""
         (self.dir / "approvals").mkdir(parents=True, exist_ok=True)
         # Field bug: requests left by a previous run (MCP killed, hub restarted) showed up as phantom approvals.
         stale = self.dir / "approvals" / "stale"
@@ -56,24 +96,31 @@ class DesktopBridge:
             "source": "phone",
             "max_minutes": self._max_minutes(),
         }
-        tmp = self.dir / "task_active.json.tmp"
-        tmp.write_text(json.dumps(payload), "utf-8")
-        tmp.replace(self.dir / "task_active.json")
+        try:
+            write_atomic(self.dir / "task_active.json", json.dumps(payload))
+        except OSError as exc:   # next heartbeat retries; desktop-mcp tolerates a missed one (15 s)
+            self._log(f"task_active.json write failed: {exc!r}")
 
     def clear_task_active(self) -> None:
         for name in ("task_active.json", "task_active.json.tmp"):
-            f = self.dir / name
-            try:
-                if f.exists():
-                    f.unlink()
-            except OSError:
-                pass
+            if not unlink_retry(self.dir / name):
+                self._log(f"{name} could not be removed yet; step() retries")
 
     def on_task_start(self, task) -> None:
         self.write_task_active(task)
 
     def on_task_end(self, _task) -> None:
+        self._ended_at = self.clock()
         self.clear_task_active()
+
+    def _log(self, msg: str) -> None:
+        if msg != self._last_error:
+            self._last_error = msg
+            print(f"desktop bridge: {msg}", file=sys.stderr)
+
+    def _phone_task_running(self) -> bool:
+        t = self.m.running_task()
+        return bool(t and getattr(t, "source", "phone") == "phone" and not self.m.paused and not self.m.stopped)
 
     def set_stop(self, stopped: bool) -> None:
         f = self.dir / "STOP"
@@ -116,7 +163,10 @@ class DesktopBridge:
 
     def touch_alive(self) -> None:
         if self.clock() - self.activity() < self.alive_seconds:
-            (self.dir / "approver.alive").write_text(str(self.clock()), "utf-8")
+            try:
+                (self.dir / "approver.alive").write_text(str(self.clock()), "utf-8")
+            except OSError as exc:
+                self._log(f"approver.alive write failed: {exc!r}")
 
     def summary_to_call(self, req: dict) -> dict:
         crop = None
@@ -166,7 +216,10 @@ class DesktopBridge:
                     self.write_task_active(task)
             else:
                 self.clear_task_active()
+        elif not self._phone_task_running() and (self.dir / "task_active.json").exists():
+            self.clear_task_active()   # whatever ended the task (done, error, STOP, cancel), the file must go
         lock = self.read_lock()
+        lock = self._drop_stale_task_lock(lock)
         await self.m.set_input_lock(lock)
         ind = self.read_indicator(lock)
         self.m.indicator_external = (self.dir / "indicator.json").exists()
@@ -177,7 +230,26 @@ class DesktopBridge:
                 self.handled.add(p.name)
                 asyncio.create_task(self.handle(p))
 
+    STALE_TASK_LOCK_SECONDS = 20.0   # desktop-mcp drops a whole-task lock 15 s after the last heartbeat
+
+    def _drop_stale_task_lock(self, lock: dict) -> dict:
+        """input_lock.json only changes when desktop-mcp writes it. If the agent died (or never saw the end), a
+        whole-task lock would stay "locked" in the hub forever; once no task runs and the end is older than
+        desktop-mcp's own heartbeat timeout, report it unlocked."""
+        if not lock.get("locked") or self.m.running_task() is not None:
+            return lock
+        whole = lock.get("mode") == "whole_task" or lock.get("reason") == "remote_task"
+        ended = self._ended_at
+        if whole and ended is not None and self.clock() - ended >= self.STALE_TASK_LOCK_SECONDS:
+            return {"locked": False, "mode": lock.get("mode"), "since": None, "reason": "task-ended"}
+        return lock
+
     async def run(self) -> None:
         while True:
-            await self.step()
+            try:
+                await self.step()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001  one bad step must never stop the bridge (field bug 18/11)
+                self._log(f"step failed: {exc!r}")
             await asyncio.sleep(0.1)

@@ -448,3 +448,84 @@ def test_resolve_launch_target_order_and_launch_startfile(monkeypatch, desktop):
     assert out["ok"] is True
     assert out["how"] == "start-menu" and out["matched"] == "Zalo"
     assert out["reused_existing_window"] is True and out["windows"] == []
+
+
+# ---------------------------------------------------------------- field bug 18/11: still "working" after the task ended
+
+def _task_file(d, t, hb):
+    sec.atomic_write_json(d / "task_active.json", {"task": "t-9", "since": t, "heartbeat": hb, "source": "phone"})
+
+
+def test_task_ends_during_real_input_then_everything_is_released(tmp_path):
+    clock = FakeClock(1000.0)
+    ind = bd.Indicator(disabled_by_env=True, state_dir=tmp_path)
+    ind.state.now = clock
+    lock = FakeLock()
+    bridge = il.StateBridge(lock=lock, indicator=ind, state_dir=tmp_path, now=clock, allow_windows=False)
+    _task_file(tmp_path, 1000.0, 1000.0)
+    bridge.tick()
+    assert lock.locked and ind.state.locked
+
+    # a real-input action is in flight when the hub deletes task_active.json
+    lock._depth = 1
+    ind.real_input(True)
+    (tmp_path / "task_active.json").unlink()
+    clock.t += 1
+    bridge.tick()
+    assert lock.locked and lock.mode == "real_input"      # the running click keeps its short lock
+    assert ind.state.locked is False                      # the whole-task frame is handed over
+
+    # the action ends but its release is missed (the race seen in the field): the next tick cleans up
+    lock._depth = 0
+    ind.real_input(False)
+    clock.t += 1
+    bridge.tick()
+    assert lock.locked is False
+    assert json.loads((tmp_path / "input_lock.json").read_text("utf-8"))["locked"] is False
+    assert json.loads((tmp_path / "indicator.json").read_text("utf-8")) == {"state": "acting"}   # short afterglow only
+    assert bridge.banner_text == ""
+    clock.t += 4
+    bridge.tick()
+    assert json.loads((tmp_path / "indicator.json").read_text("utf-8")) == {"state": "idle"}
+
+
+def test_frame_left_locked_without_a_lock_is_cleared(tmp_path):
+    clock = FakeClock(1000.0)
+    ind = bd.Indicator(disabled_by_env=True, state_dir=tmp_path)
+    ind.state.now = clock
+    lock = FakeLock()
+    bridge = il.StateBridge(lock=lock, indicator=ind, state_dir=tmp_path, now=clock, allow_windows=False)
+    ind.locked(True)            # orange frame says "locked", but nothing holds the input and no task runs
+    bridge.tick()
+    assert ind.state.locked is False
+    assert json.loads((tmp_path / "indicator.json").read_text("utf-8")) == {"state": "idle"}
+
+
+def test_unreadable_task_file_mid_replace_does_not_end_the_task(tmp_path):
+    clock = FakeClock(1000.0)
+    ind = bd.Indicator(disabled_by_env=True, state_dir=tmp_path)
+    ind.state.now = clock
+    lock = FakeLock()
+    bridge = il.StateBridge(lock=lock, indicator=ind, state_dir=tmp_path, now=clock, allow_windows=False)
+    _task_file(tmp_path, 1000.0, 1000.0)
+    bridge.tick()
+    assert lock.locked
+    (tmp_path / "task_active.json").write_text("{", "utf-8")   # half-written / sharing violation
+    clock.t += 1
+    bridge.tick()
+    assert lock.locked and lock.releases == []
+    _task_file(tmp_path, 1000.0, clock.t)
+    bridge.tick()
+    assert lock.locked and lock.releases == []
+    (tmp_path / "task_active.json").unlink()
+    bridge.tick()
+    assert lock.locked is False and lock.releases
+
+
+def test_local_whole_task_linger_is_left_alone(tmp_path):
+    clock = FakeClock(1000.0)
+    lock = FakeLock()
+    bridge = il.StateBridge(lock=lock, indicator=None, state_dir=tmp_path, now=clock, allow_windows=False)
+    lock.acquire(max_seconds=30, whole_task=True, reason="whole_task")   # Strict preset, local run: lingers on purpose
+    bridge.tick()
+    assert lock.locked and lock.releases == []

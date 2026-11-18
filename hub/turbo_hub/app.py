@@ -16,7 +16,7 @@ from . import crypto, reaper, screen, totp
 from .audit import AuditLog
 from contextlib import asynccontextmanager
 
-from .bridge import DesktopBridge
+from .bridge import DesktopBridge, write_atomic
 from .manager import PcLocked, TaskManager, _today
 from .runners import FakeRunner, RunnerFactory
 from .store import SecretStore
@@ -594,9 +594,10 @@ def create_app(settings: Settings) -> FastAPI:
             audit.append("screen_view", {"device": ctx.device_id, "redacted": redacted})
         if settings.desktop_state_dir:
             settings.desktop_state_dir.mkdir(parents=True, exist_ok=True)
-            tmp = settings.desktop_state_dir / "screen_view.json.tmp"
-            tmp.write_text(json.dumps({"until": t + 5}), "utf-8")
-            tmp.replace(settings.desktop_state_dir / "screen_view.json")
+            try:   # desktop-mcp may be reading it: retry, and never fail the frame over this hint file
+                write_atomic(settings.desktop_state_dir / "screen_view.json", json.dumps({"until": t + 5}))
+            except OSError:
+                pass
         headers = {"X-Redacted": str(redacted), **sign_response(ctx.nonce, ctx.path_qs, 200, jpeg)}
         return Response(jpeg, status_code=200, media_type="image/jpeg", headers=headers)
 

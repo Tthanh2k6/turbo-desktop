@@ -602,6 +602,21 @@ class StateBridge:
             return True
         return False
 
+    def _leftover_lock(self) -> bool:
+        """No task file, yet the lock or the frame still says "locked" although nothing holds them: a task ended while
+        real input was in flight and the hand-over below missed its release (field bug 18/11). Never touches a
+        local whole-task linger or a real-input action that is still running."""
+        if self.lock is None:
+            st = getattr(self.indicator, "state", self.indicator)
+            return bool(getattr(st, "locked", False)) and not getattr(st, "real_active", False)
+        st = getattr(self.indicator, "state", self.indicator)
+        real_now = bool(getattr(st, "real_active", False)) or bool(getattr(self.lock, "real_input_active", False))
+        depth = getattr(self.lock, "_depth", None)
+        holding = (depth > 0) if depth is not None else self._real_input_holding()
+        if real_now or holding or getattr(self.lock, "whole_task", False) or getattr(self.lock, "remote_task", False):
+            return False
+        return bool(getattr(self.lock, "locked", False)) or bool(getattr(st, "locked", False))
+
     def _set_ind_locked(self, v: bool):
         if self.indicator is None:
             return
@@ -649,6 +664,9 @@ class StateBridge:
     def _do_release(self, reason: str, respect_real_input: bool = False):
         if respect_real_input and self._real_input_holding():
             self.task_locked = False
+            self._task_id = None
+            self._task_since = None
+            self._set_ind_locked(False)   # the running real-input action re-sets it from the lock when it ends
             if self.lock is not None:
                 if hasattr(self.lock, "release_remote_task") and (not isinstance(self.lock, InputLock) or self.allow_windows):
                     self.lock.release_remote_task(reason)
@@ -787,11 +805,16 @@ class StateBridge:
 
         # 3. Check <state>/task_active.json
         tf = d / "task_active.json"
-        data = sec.read_json_safe(tf) if tf.exists() else None
-        if data is None:
+        present = tf.exists()
+        data = sec.read_json_safe(tf) if present else None
+        if present and data is None:
+            pass   # the hub is replacing the file right now (Windows sharing): keep the current state for one tick
+        elif data is None:
             self._ignored_sig = None
             if self.task_locked or getattr(self.lock, "remote_task", False):
                 self._do_release("task-ended", respect_real_input=True)
+            elif self._leftover_lock():
+                self._do_release("task-ended", respect_real_input=False)
         else:
             sig = self._sig(data)
             if self._ignored_sig is not None and sig != self._ignored_sig:
