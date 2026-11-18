@@ -153,6 +153,9 @@ def system_state() -> str:
 
 
 def main():
+    # The hub marks its own Claude Code agent with TURBO_HUB_AGENT=1 so the owner's PermissionRequest hook skips it.
+    # Apps this server launches must not inherit that marker (an owner's VS Code started here would lose the hook).
+    os.environ.pop("TURBO_HUB_AGENT", None)
     from .border import set_per_monitor_dpi_aware
     set_per_monitor_dpi_aware()
     import atexit

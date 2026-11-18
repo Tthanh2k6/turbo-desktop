@@ -224,3 +224,41 @@ def test_build_ruleset_falls_back_to_top_level_keys_when_desktop_table_exists(tm
     assert loaded.indicator == {"border": False, "color": "#112233"}
     assert "top_level_app" in loaded.allowlist
     assert loaded.secret_patterns == ["confidential_deck"]
+
+
+OWNER_18_11 = {"rules": [
+    {"id": "owner-shell", "level": "ask", "process": ["powershell", "cmd", "windowsterminal"]},
+    {"id": "owner-git-push-typed", "level": "ask", "action": ["type", "set_value", "send_text"], "text": r"\bgit\s+push\b"},
+    {"id": "owner-send-delete-buttons", "level": "ask", "action": ["click", "invoke"],
+     "name": r"\b(send|gửi|delete|xoá|xóa|remove)\b|\bđăng\b(?!\s*(nhập|ký|xuất))"},
+    {"id": "owner-delete-key-explorer", "level": "ask", "action": ["press_keys"], "process": ["explorer"],
+     "keys": r"^(shift\+)?\{?(delete|del)\}?$"},
+]}
+
+
+def test_text_field_matches_what_is_typed():
+    r = rs("easy", OWNER_18_11)
+    ask = lambda **kw: sec.classify_action(window_title="w", ruleset=r, **kw).level
+    assert ask(process="code", action="type", text="git push origin main") == "ask"
+    assert ask(process="code", action="set_value", text="git  push") == "ask"
+    assert ask(process="code", action="type", text="git status") == "allow"
+    assert ask(process="code", action="click", control_name="Push") == "allow"   # no button rule in this set
+    assert ask(process="notepad", action="type", text=None) == "allow"
+
+
+def test_owner_list_ordinary_actions_run_dangerous_ones_ask():
+    r = rs("easy", OWNER_18_11)
+    lv = lambda **kw: sec.classify_action(window_title="w", ruleset=r, **kw).level
+    # ordinary desktop work runs without asking
+    assert lv(process="notepad", action="launch") == "allow"
+    assert lv(process="explorer", action="click", control_name="Copy") == "allow"
+    assert lv(process="explorer", action="press_keys", keys="ctrl+v") == "allow"
+    assert lv(process="chrome", action="click", control_name="Đăng nhập") == "allow"
+    assert lv(process="notepad", action="type", text="hello") == "allow"
+    # the owner's list asks
+    assert lv(process="powershell", action="type", text="dir") == "ask"
+    assert lv(process="explorer", action="press_keys", keys="shift+delete") == "ask"
+    assert lv(process="outlook", action="click", control_name="Send") == "ask"
+    assert lv(process="chrome", action="click", control_name="Đăng") == "ask"
+    assert lv(process="chrome", action="click", control_name="Pay now") == "ask"        # Easy preset rule
+    assert lv(process="appwiz", action="click", control_name="Uninstall") == "ask"     # Easy preset rule

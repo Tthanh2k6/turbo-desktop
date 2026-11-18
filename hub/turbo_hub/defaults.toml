@@ -76,6 +76,8 @@ windows = ["mail", "chat", "messenger", "zalo", "compose"]
 match = "all"
 [approval.category.task_manager]
 processes = ["taskmgr"]
+[approval.category.git_push]
+controls = ["\\bpush\\b", "sync changes", "đồng bộ thay đổi", "publish branch"]
 
 # Deny zones: the agent may not read or type there at all. The desktop MCP enforces them (it reads this file).
 # Password fields are ALWAYS a deny zone (hard floor) and are not listed here.

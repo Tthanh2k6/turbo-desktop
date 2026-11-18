@@ -140,7 +140,7 @@ def classify_action(*, process: str | None, window_title: str | None, control_na
                     automation_id: str | None = None, help_text: str | None = None,
                     multiline: bool = False, dialog_text: str | None = None,
                     position: str | None = None, ruleset=None,
-                    session_restore: bool = False) -> Classification:
+                    session_restore: bool = False, text: str | None = None) -> Classification:
     """Single entry point for the hub: returns Decision(level allow|ask|deny, rule id, reason).
 
     Hard floor (code, not configurable): a password field is always denied."""
@@ -156,7 +156,7 @@ def classify_action(*, process: str | None, window_title: str | None, control_na
         "process": process, "title": window_title, "name": control_name, "role": control_role, "action": action,
         "keys": keys, "dialog_title": dialog_title, "dialog_text": dialog_text, "context": window_context,
         "automation_id": automation_id, "help_text": help_text, "multiline": multiline, "position": position,
-        "session_restore": session_restore,
+        "session_restore": session_restore, "text": text,
     }, ruleset)
 
 

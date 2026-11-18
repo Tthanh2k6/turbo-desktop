@@ -219,13 +219,17 @@ def user_frame(text: str) -> bytes:
 
 
 def build_claude_env(base_env: dict | None = None) -> dict[str, str]:
-    """Merge the existing environment and set ENABLE_TOOL_SEARCH=false unless the user already set it."""
+    """Merge the existing environment, set ENABLE_TOOL_SEARCH=false unless the user already set it, and mark the
+    process as the hub's agent (TURBO_HUB_AGENT=1)."""
     env = dict(os.environ)
     if base_env:
         for k, v in base_env.items():
             if k != "ENABLE_TOOL_SEARCH" or "ENABLE_TOOL_SEARCH" not in env:
                 env[k] = str(v)
     env.setdefault("ENABLE_TOOL_SEARCH", "false")
+    # Marks the hub's own agent so the owner's Claude Code PermissionRequest hook (scripts/cc_permission_hook.py)
+    # stays out of the way and the --permission-prompt-tool below decides (desktop-mcp rules).
+    env["TURBO_HUB_AGENT"] = "1"
     return env
 
 

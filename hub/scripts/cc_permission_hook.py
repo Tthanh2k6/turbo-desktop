@@ -8,7 +8,13 @@ Whichever side answers first wins, the other closes:
   - PC: a small dialog from this script ("Cho phép" / "Từ chối" / "Để Claude Code hỏi").
 No timeout: it waits until someone answers. If the hub is not running, it prints nothing and Claude Code asks as usual.
 
-Env: TURBO_HUB_URL (default http://127.0.0.1:8750), TURBO_HUB_DATA (hub data dir), TURBO_CC_HOOK_NO_DIALOG=1.
+Agents that the hub itself starts (env TURBO_HUB_AGENT=1, set by runners.build_claude_env) are skipped: the hook prints
+nothing, so Claude Code falls through to the hub's own --permission-prompt-tool (mcp__turbohub__approve), where
+desktop-mcp's rules decide. Without this, every ordinary desktop tool call of a phone task opened the PC dialog,
+which took the focus away from the window the agent was driving (field bug 18/11).
+
+Env: TURBO_HUB_URL (default http://127.0.0.1:8750), TURBO_HUB_DATA (hub data dir), TURBO_CC_HOOK_NO_DIALOG=1,
+TURBO_HUB_AGENT=1 (set by the hub for its own agent processes).
 """
 from __future__ import annotations
 
@@ -22,6 +28,12 @@ import urllib.request
 from pathlib import Path
 
 HUB = os.environ.get("TURBO_HUB_URL", "http://127.0.0.1:8750").rstrip("/")
+HUB_AGENT_ENV = "TURBO_HUB_AGENT"
+
+
+def is_hub_agent(env=None) -> bool:
+    """True inside a Claude Code process the hub started for a phone/hub task."""
+    return (env if env is not None else os.environ).get(HUB_AGENT_ENV) == "1"
 
 
 def _data_dir() -> Path:
@@ -224,6 +236,8 @@ def run(payload: dict, http: Http, dialog_factory=Dialog, poll_wait: float = 20.
 
 def main() -> int:
     raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+    if is_hub_agent():
+        return 0   # hub's own agent: its --permission-prompt-tool decides, never open the PC dialog
     try:
         payload = json.loads(raw)
     except ValueError:

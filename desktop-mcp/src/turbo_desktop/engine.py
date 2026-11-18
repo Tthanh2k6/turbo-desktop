@@ -967,7 +967,8 @@ class Desktop:
                                   dialog_title=self._dialog_title(c) if c is not None else None,
                                   is_password=info["is_password"], class_name=d.get("class"),
                                   automation_id=info["automation_id"], help_text=info["help_text"],
-                                  multiline=info["multiline"])
+                                  multiline=info["multiline"],
+                                  text=(text if text is not None else value) if action in ("type", "set_value", "send_text") else None)
         base = {"window": d["title"], "process": d["process"], "control": info["name"], "role": info["role"], "action": action}
         if cls.level == "deny":
             self.audit.write(event="denied", reason=cls.reason, rule=cls.rule, **base)

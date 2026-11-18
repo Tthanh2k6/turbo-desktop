@@ -192,6 +192,8 @@ def rule_matches(r: dict, ctx: dict, allowlist: set) -> bool:
         return False
     if "keys" in r and not _rx(r["keys"], (ctx.get("keys") or "").strip()):
         return False
+    if "text" in r and not _rx(r["text"], ctx.get("text")):
+        return False
     if r.get("unnamed") and (ctx.get("name") or "").strip():
         return False
     if r.get("unnamed") and (ctx.get("help_text") or "").strip():

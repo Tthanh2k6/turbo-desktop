@@ -17,6 +17,7 @@
 #   dialog     regex on the title/text of the dialog the control sits in
 #   context    regex on the page heading (used for Windows Settings)
 #   keys       regex on the keys being pressed (e.g. Enter)
+#   text       regex on the text being typed or set (type / set_value / send_text), e.g. "\bgit\s+push\b"
 #   unnamed    true = a button with no name and no tooltip
 #   multiline  true = a multi-line text box
 #   session_restore  true = the app is in [apps.session_restore] (reopens previous documents)

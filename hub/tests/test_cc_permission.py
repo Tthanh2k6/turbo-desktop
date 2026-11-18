@@ -220,3 +220,25 @@ def test_parent_watch_helper():
     p = subprocess.Popen([sys.executable, "-c", "pass"])
     p.wait()
     assert hook._alive(p.pid) is False
+
+
+def test_hub_agent_is_skipped_so_its_own_approval_tool_decides(monkeypatch, capsys):
+    """Field bug 18/11: every ordinary desktop call of a phone task opened the PC dialog and stole the focus."""
+    from turbo_hub.runners import build_claude_env
+    env = build_claude_env({})
+    assert env["TURBO_HUB_AGENT"] == "1"
+    assert hook.is_hub_agent(env) and not hook.is_hub_agent({})
+
+    import io
+    called = []
+    monkeypatch.setattr(hook, "run", lambda *a, **k: called.append(1) or ("allow", "pc"))
+    monkeypatch.setattr(hook, "load_token", lambda: "tok")
+    monkeypatch.setenv("TURBO_HUB_AGENT", "1")
+    monkeypatch.setattr(hook.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(BASH).encode())))
+    assert hook.main() == 0
+    assert capsys.readouterr().out == "" and called == []   # no dialog, no hub request, no decision printed
+
+    monkeypatch.delenv("TURBO_HUB_AGENT")
+    monkeypatch.setattr(hook.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(BASH).encode())))
+    assert hook.main() == 0
+    assert called == [1] and '"behavior": "allow"' in capsys.readouterr().out
