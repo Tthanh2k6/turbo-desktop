@@ -160,7 +160,13 @@ def main():
     set_per_monitor_dpi_aware()
     import atexit
     atexit.register(lambda: _desktop and _desktop.close_launched())
-    mcp.run("stdio")
+    if sec.bridge_dir() is not None:
+        _on_worker(desk)
+    try:
+        mcp.run("stdio")
+    finally:
+        if _desktop is not None:
+            _desktop.close_launched()
 
 
 if __name__ == "__main__":

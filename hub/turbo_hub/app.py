@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -100,6 +101,7 @@ class State:
     locked_until: dict[str, float] = field(default_factory=dict)
     task_tokens: dict[str, str] = field(default_factory=dict)
     started: int = 0
+    started_ms: int = 0
     totp_window_exp: float = 0.0   # enrolment window: the phone may fetch the otpauth secret once until then
     screen_last_at: dict[str, float] = field(default_factory=dict)
     screen_audit_at: dict[str, float] = field(default_factory=dict)
@@ -121,7 +123,9 @@ def create_app(settings: Settings) -> FastAPI:
                           tasks_path=settings.data_dir / "tasks.jsonl",
                           engine=settings.approval_engine)
     st = State(settings, store, audit, manager)
-    st.started = int(settings.clock())
+    start_ts = float(settings.clock())
+    st.started = int(start_ts)
+    st.started_ms = int(round(start_ts * 1000))
     sessions_file = settings.data_dir / "sessions.dpapi"
     if settings.persist_sessions and sessions_file.exists():
         from . import dpapi
@@ -204,7 +208,7 @@ def create_app(settings: Settings) -> FastAPI:
         return request.url.path + (("?" + q) if q else "")
 
     def sign_response(ctx_nonce: str, ctx_path: str, status: int, body: bytes) -> dict[str, str]:
-        ts = str(int(now()))
+        ts = str(int(round(now() * 1000)))
         sig = crypto.sign(store.hub_key, crypto.canonical_response(status, ctx_path, body, ts, ctx_nonce))
         return {"X-Hub-Ts": ts, "X-Hub-Sig": sig}
 
@@ -275,11 +279,21 @@ def create_app(settings: Settings) -> FastAPI:
         for k in [k for k, exp in st.nonces.items() if exp < t]:
             del st.nonces[k]
 
+    def _parse_ts_ms(raw: str) -> int:
+        if not raw or len(raw) > 32 or not re.fullmatch(r"\d+(?:\.\d{1,6})?", raw):
+            raise ValueError("bad timestamp")
+        if "." in raw:
+            return int(round(float(raw) * 1000))
+        val = int(raw)
+        return val if val >= 100_000_000_000 else val * 1000
+
     def check_fresh(request: Request, ts: str, nonce: str) -> None:
         try:
-            if abs(now() - int(ts)) > crypto.MAX_SKEW_SECONDS:
+            ts_ms = _parse_ts_ms(ts)
+            now_ms = int(round(float(now()) * 1000))
+            if abs(now_ms - ts_ms) > crypto.MAX_SKEW_SECONDS * 1000:
                 raise reject(request, 401, "stale timestamp")
-            if int(ts) < st.started:   # nonces are in memory only: nothing signed before this start can be replayed
+            if ts_ms < st.started_ms:   # nonces are in memory only: nothing signed before this start can be replayed
                 raise reject(request, 401, "stale timestamp (before hub start)")
         except ValueError:
             raise reject(request, 401, "bad timestamp")
@@ -564,7 +578,8 @@ def create_app(settings: Settings) -> FastAPI:
                            "inputLock": manager.input_lock, "indicator": manager.indicator,
                            "usage": {"session": manager.session_usage,
                                      "today": manager.daily_usage.get(_today(now()), {})},
-                           "pendingApprovals": len(manager.pending_approvals()), "now": int(now())})
+                           "pendingApprovals": len(manager.pending_approvals()), "now": int(now()),
+                           "startedMs": st.started_ms})
 
     @app.get("/screen.jpg")
     async def get_screen_jpg(w: int = 960, q: int = 60, rx: int = 0, ry: int = 0, rw: int = 1000, rh: int = 1000,
@@ -654,18 +669,26 @@ def create_app(settings: Settings) -> FastAPI:
                         return
                     last = ev["seq"]
                     yield sse_frame(ev)
+                idle_ticks = 0
                 while True:
                     if not session_ok():
                         return
+                    activity[0] = now()
                     try:
-                        ev = await asyncio.wait_for(q.get(), 15)
+                        ev = await asyncio.wait_for(q.get(), 7.5)
+                        idle_ticks = 0
                     except asyncio.TimeoutError:
                         if not session_ok() or await request.is_disconnected():
                             return
-                        yield b": hb\n\n"
+                        activity[0] = now()
+                        idle_ticks += 1
+                        if idle_ticks >= 2:
+                            idle_ticks = 0
+                            yield b": hb\n\n"
                         continue
                     if not session_ok():
                         return
+                    activity[0] = now()
                     if ev["seq"] > last:
                         last = ev["seq"]
                         yield sse_frame(ev)

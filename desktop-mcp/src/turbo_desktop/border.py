@@ -383,10 +383,11 @@ class Indicator:
         d = sec.bridge_dir(self._state_dir)
         if d is None:
             return
-        st = self.state.bridge_state()
-        if st != self._last_bridge or not (d / "indicator.json").exists():
-            self._last_bridge = st
-            sec.atomic_write_json(d / "indicator.json", {"state": st})
+        with sec.BRIDGE_LOCK:
+            st = self.state.bridge_state()
+            if st != self._last_bridge or not (d / "indicator.json").exists():
+                self._last_bridge = st
+                sec.atomic_write_json(d / "indicator.json", {"state": st})
 
     def _go(self):
         self.write_bridge()

@@ -41,6 +41,23 @@ def bridge_dir(explicit: Path | str | None = None) -> Path | None:
     return d
 
 
+BRIDGE_LOCK = threading.RLock()
+
+
+def unlink_retry(path: Path, retries: int = 15, sleep: float = 0.01) -> bool:
+    """Unlink a bridge file with retries on Windows sharing violations."""
+    p = Path(path)
+    for _ in range(retries):
+        try:
+            p.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            time.sleep(sleep)
+        except OSError:
+            return not p.exists()
+    return not p.exists()
+
+
 def atomic_write_json(path: Path, data: dict) -> None:
     """Write JSON atomically via temp file + os.replace in the same directory."""
     path = Path(path)
@@ -48,14 +65,14 @@ def atomic_write_json(path: Path, data: dict) -> None:
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
     try:
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        for i in range(5):
+        for i in range(20):
             try:
                 os.replace(tmp, path)
                 return
             except PermissionError:
-                if i == 4:
+                if i == 19:
                     raise
-                time.sleep(0.01)
+                time.sleep(0.015)
     except OSError:
         try:
             if tmp.exists():
@@ -65,11 +82,15 @@ def atomic_write_json(path: Path, data: dict) -> None:
 
 
 def read_json_safe(path: Path) -> dict | None:
-    try:
-        d = json.loads(Path(path).read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else None
-    except (OSError, ValueError):
-        return None
+    for _ in range(5):
+        try:
+            d = json.loads(Path(path).read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else None
+        except PermissionError:
+            time.sleep(0.01)
+        except (OSError, ValueError):
+            return None
+    return None
 
 
 def stop_requested() -> bool:

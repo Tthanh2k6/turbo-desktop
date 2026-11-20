@@ -168,6 +168,7 @@ object Graph {
     val showApiCost = MutableStateFlow(false)
     private var conn: Job? = null
     private var lastSeq = 0L
+    @Volatile private var hubStartedMs = 0L
 
     fun init(application: Application) {
         if (this::app.isInitialized) return
@@ -225,6 +226,7 @@ object Graph {
     fun sessionSecondsLeft(): Long = (prefs.sessionExp - System.currentTimeMillis() / 1000).coerceAtLeast(0)
 
     fun fail(e: Throwable): String {
+        if (e is HubError && e.kind == ErrKind.NETWORK) online.value = false
         val msg = when {
             e is HubError && e.kind == ErrKind.ACCESS_LOGIN -> { needAccessLogin.value = true; app.getString(R.string.st_access_login) }
             e is HubError -> e.message ?: app.getString(R.string.st_error_generic)
@@ -256,6 +258,8 @@ object Graph {
         prefs.unpairLocal()
         sessionId.value = ""
         sessionExp.value = 0
+        lastSeq = 0L
+        hubStartedMs = 0L
         online.value = false
         events.value = emptyList()
         screenFrame.value = null
@@ -318,21 +322,65 @@ object Graph {
     } catch (e: Exception) { fail(e); null }
 
     // ---------------------------------------------------------------- connection
+    private fun clearExpiredSession() {
+        prefs.sessionId = ""
+        sessionId.value = ""
+        sessionExp.value = 0
+        lastSeq = 0L
+        hubStartedMs = 0L
+        online.value = false
+        status.value = app.getString(R.string.st_session_expired)
+    }
+
+    private fun restartConnection() {
+        conn?.cancel()
+        conn = null
+        startConnection()
+    }
+
     fun startConnection() {
         if (conn?.isActive == true) return
         conn = scope.launch(Dispatchers.IO) {
             var backoff = 1000L
             while (isActive && sessionOpen) {
                 try {
-                    client.streamEvents(lastSeq) { j -> handle(j) }
+                    client.streamEvents(
+                        since = lastSeq,
+                        onConnected = {
+                            backoff = 1000L
+                            online.value = true
+                            via.value = prefs.activePath
+                            val offlineMsg = app.getString(R.string.home_offline)
+                            val routeOffline = app.getString(R.string.route_offline)
+                            if (status.value == offlineMsg || status.value == routeOffline || status.value.startsWith("Hub unreachable")) {
+                                status.value = ""
+                            }
+                            scope.launch { refreshTasks() }
+                        },
+                        onDisconnected = {
+                            online.value = false
+                            status.value = app.getString(R.string.home_offline)
+                        },
+                    ) { j -> handle(j) }
+                    online.value = false
+                    status.value = app.getString(R.string.home_offline)
                     backoff = 1000L
                 } catch (e: HubError) {
                     online.value = false
-                    if (e.status == 401) { prefs.sessionId = ""; sessionId.value = ""; sessionExp.value = 0; status.value = app.getString(R.string.st_session_expired); break }
+                    if (e.status == 401) {
+                        if (e.message?.contains("stale timestamp", ignoreCase = true) != true) {
+                            clearExpiredSession()
+                            break
+                        }
+                    }
                     if (e.kind == ErrKind.BAD_SIGNATURE) { status.value = e.message ?: ""; delay(30_000) }
                     fail(e)
                     android.util.Log.w("TurboConn", "hub error: ${e.kind} ${e.message}")
-                } catch (e: Exception) { online.value = false; android.util.Log.w("TurboConn", "stream failed: $e") }
+                } catch (e: Exception) {
+                    online.value = false
+                    status.value = app.getString(R.string.home_offline)
+                    android.util.Log.w("TurboConn", "stream failed: $e")
+                }
                 online.value = false
                 android.util.Log.i("TurboConn", "reconnect in ${backoff}ms (active=${prefs.activePath}, urls=${prefs.urls})")
                 delay(backoff); backoff = (backoff * 2).coerceAtMost(30_000)
@@ -409,16 +457,27 @@ object Graph {
     suspend fun refreshTasks() {
         try {
             val r = client.call("GET", "/tasks")
+            if (r.status == 401) {
+                if (!r.body.contains("stale timestamp", ignoreCase = true)) clearExpiredSession()
+                return
+            }
             if (r.status == 200) {
                 online.value = true
                 via.value = prefs.activePath
                 tasks.value = JSONArray(r.body).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
             }
             val s = client.call("GET", "/status")
+            if (s.status == 401) {
+                if (!s.body.contains("stale timestamp", ignoreCase = true)) clearExpiredSession()
+                return
+            }
             if (s.status == 200) {
                 val sj = s.json()
                 online.value = true
                 via.value = prefs.activePath
+                val newStarted = sj.optLong("startedMs", 0L)
+                val hubRestarted = newStarted != 0L && hubStartedMs != 0L && newStarted != hubStartedMs
+                if (newStarted != 0L) hubStartedMs = newStarted
                 stopped.value = sj.optBoolean("stopped", stopped.value)
                 paused.value = sj.optBoolean("paused", paused.value)
                 val runningId = sj.optString("running").takeIf { it.isNotBlank() && it != "null" }
@@ -430,6 +489,10 @@ object Graph {
                 val u = sj.optJSONObject("usage")
                 sessionUsage.value = Usage.from(u?.optJSONObject("session"))
                 dayUsage.value = Usage.from(u?.optJSONObject("today"))
+                if (hubRestarted) {
+                    lastSeq = 0L
+                    restartConnection()
+                }
             }
         } catch (e: Exception) { fail(e) }
     }

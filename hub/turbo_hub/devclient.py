@@ -22,7 +22,7 @@ class DevClient:
         self.session: str | None = None
 
     def _headers(self, method: str, path_qs: str, body: bytes, ts=None, nonce=None, strong=False, device=True) -> dict:
-        ts = str(int(self.clock())) if ts is None else str(ts)
+        ts = str(int(round(self.clock() * 1000))) if ts is None else str(ts)
         nonce = nonce or secrets.token_hex(12)
         msg = crypto.canonical_request(method, path_qs, body, ts, nonce)
         h = {"X-Ts": ts, "X-Nonce": nonce, "X-Sig": crypto.sign(self.key, msg), "Content-Type": "application/json"}

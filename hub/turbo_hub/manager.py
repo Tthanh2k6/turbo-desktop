@@ -180,10 +180,10 @@ class TaskManager:
         except Exception as exc:  # runner crashed
             await emit({"type": "final", "text": f"runner error: {exc}", "ok": False})
         finally:
-            if task.status == "running":
-                task.status = "stopped" if self.stopped else status
             task.finished_at = self.clock()
             self.on_task_end(task)   # release the PC lock first: the report record must never delay or block it
+            if task.status == "running":
+                task.status = "stopped" if self.stopped else status
             if task.usage["tasks"] == 0 and task.live:
                 total = {k: sum(int(u.get(k, 0)) for u in task.live.values()) for k in ("input", "output", "cache_read", "cache_create")}
                 total["cost_usd"] = round(sum(float(u.get("cost_usd", 0.0)) for u in task.live.values()), 6)

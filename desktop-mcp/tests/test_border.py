@@ -170,7 +170,12 @@ def test_windows_on_every_monitor_click_through_no_focus_and_destroyed():
         # field check: the frame pixels really are on screen at the edges (primary monitor)
         from PIL import ImageGrab
         x, y, w, h = bd.monitors()[0]
-        img = ImageGrab.grab(bbox=(x, y, x + w, y + h), all_screens=True).convert("RGB")
+        try:
+            img = ImageGrab.grab(bbox=(x, y, x + w, y + h), all_screens=True).convert("RGB")
+        except OSError:
+            from turbo_desktop import winsys
+            img, _ = winsys.capture_window(g.hwnds[0])
+            img = img.convert("RGB")
         hits = 0
         for px in ((w // 2, 2), (w // 2, h - 3), (2, h // 2), (w - 3, h // 2)):
             r, gg, b = img.getpixel(px)

@@ -213,3 +213,32 @@ def test_send_text_without_target_types_into_the_window(launch_app, desktop):
     d = launch_app("turbo_fixture.exe")
     with pytest.raises(ToolError, match="real input disabled"):     # reaches the input stage instead of 'need ref or name'
         desktop.act(d["id"], "send_text", text="turbo-new")
+
+
+def test_richtext_multiline_and_slider_set_value(launch_app, desktop):
+    """Regression: WinForms RichEdit appends trailing EOP \\r and TrackBar snaps percentage on ValuePattern."""
+    ed = launch_app("turbo_editor.exe", "--mode", "richtext")
+    r = desktop.act(ed["id"], "set_value", name="Rich editor", text="Dòng 1\nDòng 2")
+    assert r["ok"] and r["via"] == "pattern"
+    rd = desktop.act(ed["id"], "read", name="Rich editor")
+    assert "Dòng 1\nDòng 2" in rd["text"] and "\r" not in rd["text"]
+
+    pr = launch_app("turbo_fixture.exe", "--mode", "prefs")
+    desktop.act(pr["id"], "click", name="Mouse Preferences...")
+    time.sleep(0.3)
+    dlg = [w for w in desktop.windows_list() if w["title"] == "Mouse Preferences"][0]
+    sr = desktop.act(dlg["id"], "set_value", name="Double-click speed", value="80")
+    assert sr["ok"] and sr["via"] == "pattern"
+    desktop.act(dlg["id"], "click", name="Cancel")
+    assert "5" in desktop.inspect(pr["id"], query="Current speed")
+
+
+def test_combobox_expand_and_collapse_via_value_collapse(launch_app, desktop):
+    """Regression (task 22): WinForms ComboBox has Open when collapsed and Close when expanded; value='collapse' must collapse it."""
+    fx = launch_app("turbo_fixture.exe")
+    r1 = desktop.act(fx["id"], "expand", name="Country", role="ComboBox")
+    assert r1["ok"] and "Vietnam" in desktop.inspect(fx["id"])
+    r2 = desktop.act(fx["id"], "expand", name="Country", role="ComboBox", value="collapse")
+    assert r2["ok"]
+    snap = desktop.inspect(fx["id"], mode="all")
+    assert '<Button> "Open"' in snap and '<ListItem> "Vietnam"' not in snap

@@ -188,6 +188,11 @@ fun PresenceHeader(modifier: Modifier = Modifier) {
     val stateTextColor: Color
     val stateLabel: String
     when {
+        !online -> {
+            dotColor = c.warn
+            stateTextColor = c.warn
+            stateLabel = stringResource(R.string.route_offline)
+        }
         stopped -> {
             dotColor = c.stop
             stateTextColor = c.stopText
@@ -207,11 +212,6 @@ fun PresenceHeader(modifier: Modifier = Modifier) {
             dotColor = c.ai
             stateTextColor = c.aiText
             stateLabel = stringResource(R.string.chip_acting)
-        }
-        !online -> {
-            dotColor = c.warn
-            stateTextColor = c.warn
-            stateLabel = stringResource(R.string.route_offline)
         }
         else -> {
             dotColor = c.primary

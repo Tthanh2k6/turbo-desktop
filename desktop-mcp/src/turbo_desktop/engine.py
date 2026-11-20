@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import subprocess
@@ -47,6 +48,27 @@ def no_activate_startupinfo():
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 4
     return si
+
+
+def _split_launch_args(args) -> list[str]:
+    """Split Windows launch args preserving quoted paths with spaces and backslashes."""
+    if not args:
+        return []
+    if isinstance(args, (list, tuple)):
+        return [str(a) for a in args]
+    s = str(args).strip()
+    if not s:
+        return []
+    try:
+        parts = shlex.split(s, posix=False)
+    except ValueError:
+        parts = s.split()
+    out = []
+    for tok in parts:
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in ('"', "'"):
+            tok = tok[1:-1]
+        out.append(tok)
+    return out
 
 
 # ---------------------------------------------------------------- Start Menu & AppsFolder resolution (pure + cached)
@@ -256,6 +278,9 @@ def resolve_launch_target(target: str, *, which_fn=shutil.which, app_paths_fn=fi
     raw = (target or "").strip()
     if not raw:
         return None
+    if raw.lower().startswith("shell:appsfolder\\"):
+        aid = raw.split("\\", 1)[1]
+        return {"how": "appsfolder", "matched": aid, "appId": aid, "path": raw}
     t = APP_ALIASES.get(raw.lower(), raw)
     if os.path.isabs(t) or os.sep in t or "/" in t:
         return {"how": "path", "matched": Path(t).name or t, "path": t}
@@ -837,9 +862,13 @@ class Desktop:
         cfg = rules_mod.load_ruleset().input_lock
         use_lock = cfg["mode"] in ("real_input", "whole_task") and os.environ.get("TURBO_DESKTOP_INPUT_LOCK", "1") != "0"
         prev_fg = win32gui.GetForegroundWindow()
-        prev_pos = win32api.GetCursorPos()
+        try:
+            prev_pos = win32api.GetCursorPos()
+        except Exception:
+            prev_pos = None
         self.indicator.real_input(True)     # hard floor: the frame shows while real input is sent, whatever [indicator] says
         if use_lock:
+            self.bridge.check_release()
             self.lock.acquire(cfg["max_seconds"], whole_task=(cfg["mode"] == "whole_task"))
             self.indicator.locked(True)
             self.audit.write(event="input_lock", state="on", mode=cfg["mode"])
@@ -848,7 +877,8 @@ class Desktop:
         finally:
             self._own_input_at = time.time()
             try:
-                win32api.SetCursorPos(prev_pos)
+                if prev_pos is not None:
+                    win32api.SetCursorPos(prev_pos)
                 if prev_fg and prev_fg != win32gui.GetForegroundWindow() and win32gui.IsWindow(prev_fg):
                     win32gui.SetForegroundWindow(prev_fg)
             except Exception:
@@ -947,6 +977,7 @@ class Desktop:
             direction=None, amount=1, return_snapshot: bool = False, returnSnapshot: bool | None = None):
         if returnSnapshot is not None:
             return_snapshot = bool(returnSnapshot)
+        self.bridge.check_release()
         self._ind_activity()
         self._note = {}
         if not window and not ref:
@@ -1102,10 +1133,22 @@ class Desktop:
                     return "pattern", self._state(c)
             vp = c.GetPattern(P.ValuePattern)
             if vp and not vp.IsReadOnly and role != "ComboBox":
-                new = s if action == "set_value" else (vp.Value or "") + s
+                cls_low = (c.ClassName or "").lower()
+                is_rich = "richedit" in cls_low or role == "Document"
+                cur = vp.Value or ""
+                if is_rich and cur.endswith("\r"):
+                    cur = cur[:-1]
+                new = s if action == "set_value" else cur + s
                 vp.SetValue(new)
                 got = vp.Value or ""
-                if got != new:  # tell the truth: max length, input filter or an app that rewrites the value
+                if role == "Slider":
+                    return "pattern", self._state(c)
+                norm_got = got.replace("\r\n", "\n").replace("\r", "\n")
+                norm_new = new.replace("\r\n", "\n").replace("\r", "\n")
+                matched_val = (norm_got == norm_new) or (
+                    is_rich and norm_got == (norm_new if norm_new.endswith("\n") else norm_new + "\n")
+                )
+                if not matched_val:  # tell the truth: max length, input filter or an app that rewrites the value
                     raise ToolError(f"value not applied as sent: field now holds {len(got)} of {len(new)} chars "
                                     f"(max length or input filter?)", truncated=len(got) < len(new),
                                     wanted=len(new), got=len(got), value=_clip(got, 60))
@@ -1123,14 +1166,30 @@ class Desktop:
                 return "pattern", self._state(c)
             raise ToolError("nothing to select (give text= for combo boxes)")
         if action == "expand":
+            want_collapse = str(value).lower() in ("false", "collapse")
             ec = c.GetPattern(P.ExpandCollapsePattern)
             if ec:
-                (ec.Collapse if str(value).lower() in ("false", "collapse") else ec.Expand)(0)
+                (ec.Collapse if want_collapse else ec.Expand)(0)
                 return "pattern", self._state(c)
-            # WinForms combos: the 'Open' child button
+            # WinForms combos expose 'Open' (collapsed) or 'Close' (expanded) child button without ExpandCollapsePattern
             for ch in c.GetChildren():
-                if role_of(ch) == "Button" and (ch.Name or "").lower() in ("open", "mở"):
-                    ch.GetPattern(P.InvokePattern).Invoke(0)
+                if role_of(ch) != "Button":
+                    continue
+                bname = (ch.Name or "").lower()
+                if bname in ("open", "mở"):
+                    if not want_collapse:
+                        ch.GetPattern(P.InvokePattern).Invoke(0)
+                    return "pattern", {}
+                if bname in ("close", "đóng"):
+                    if want_collapse:
+                        try:
+                            ch.GetPattern(P.InvokePattern).Invoke(0)
+                        except Exception:
+                            pass
+                        # WinForms DropDownList in an inactive window ignores UIA Close Invoke; CB_SHOWDROPDOWN collapses it cleanly.
+                        hwnd = getattr(c, "NativeWindowHandle", 0)
+                        if hwnd:
+                            win32gui.SendMessage(int(hwnd), 0x014F, 0, 0)
                     return "pattern", {}
             raise ToolError("element has no ExpandCollapse pattern")
         if action == "focus":
@@ -1293,11 +1352,13 @@ class Desktop:
               returnSnapshot: bool | None = None) -> dict:
         if returnSnapshot is not None:
             return_snapshot = bool(returnSnapshot)
+        self.bridge.check_release()
         self._ind_activity()
         results = []
         failed = None
         last_win = window
         for i, st in enumerate(steps):
+            self.bridge.check_release()
             st = dict(st)
             op = st.pop("op", "act")
             st.setdefault("window", window)
@@ -1331,6 +1392,8 @@ class Desktop:
             # All steps ran: list only the steps that carry something (a snapshot, a value, a note, real input).
             plain = lambda r: set(r) <= {"i", "ok", "via"} and r.get("ok") is True and r.get("via") in (None, "pattern")
             out = {"ok": True, "ran": len(results), "steps": [r for r in results if not plain(r)]}
+            if not sec.stop_requested():
+                self._ind_activity()
         else:
             out = {"ok": False, "steps": results, "failedAt": failed}
         snap_win = window or last_win
@@ -1380,7 +1443,9 @@ class Desktop:
         end = time.time() + timeout
         last_d = None
         while True:
+            self.bridge.check_release()
             if sec.stop_requested():  # field bug 4: STOP during a long wait was ignored
+                self.indicator.hide_now()
                 raise ToolError("emergency stop active: wait cancelled", stopped=True)
             if window is None and title:
                 found = any(title.lower() in d["title"].lower() for d in self.windows_list())
@@ -1439,8 +1504,10 @@ class Desktop:
             snapshot_query = kw.pop("snapshotQuery")
         if "snapshotMaxChars" in kw:
             snapshot_max_chars = int(kw.pop("snapshotMaxChars"))
+        self.bridge.check_release()
         self._ind_activity()
         if sec.stop_requested():
+            self.indicator.hide_now()
             raise ToolError("emergency stop active", stopped=True)
         t = APP_ALIASES.get(target.lower(), target)
         resolved = resolve_launch_target(target)
@@ -1474,7 +1541,7 @@ class Desktop:
         if cls.level == "deny":
             self.audit.write(event="denied", reason=cls.reason, rule=cls.rule, **base)
             raise ToolError(cls.reason, denied=True, rule=cls.rule)
-        argv = [path] + (args.split() if args else [])
+        argv = [path] + _split_launch_args(args)
         extra: dict = {"how": how, "matched": matched}
         if resolved and "shortcut" in resolved:
             extra["shortcut"] = resolved["shortcut"]
@@ -1589,9 +1656,14 @@ class Desktop:
             if extra.get("reused_existing_window"):
                 out["hint"] = (f"{matched} reused an existing window; pass returnExisting=true or inspect the "
                                f"existing window directly instead of calling wait_for")
+            elif not winsys.on_input_desktop() and (how == "appsfolder" or exe_name in ("calc", "calculator", "calculatorapp")):
+                out["hint"] = (f"{matched} started from an isolated Win32 desktop (not the active input desktop); "
+                               f"UWP/Store apps activate on the interactive Default desktop and are invisible here")
             else:
                 out["hint"] = (f"{matched} started but no new window appeared yet (launcher or tray app); "
                                f"do not loop on wait_for—check open windows or pass returnExisting=true")
+        if not sec.stop_requested():
+            self._ind_activity()
         return out
 
     def close_launched(self):
@@ -1599,6 +1671,12 @@ class Desktop:
         from the launcher are found too). Windows we did not launch are never touched."""
         try:
             self.bridge.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self.lock, "locked", False):
+                self.lock.release("exit")
+            self.indicator.hide_now()
         except Exception:
             pass
         for hwnd in list(self.launched):
@@ -1610,6 +1688,7 @@ class Desktop:
         self.launched.clear()
 
     def window_control(self, window, action):
+        self.bridge.check_release()
         self._ind_activity()
         d = self.find_window(window)
         self._guard_window(d, "focus" if action != "close" else "close")
@@ -1738,7 +1817,7 @@ def _resolve_launch_names(target: str, t: str, resolved: dict | None) -> tuple[s
 
 
 def _clip_keep_nl(s, n):
-    s = s or ""
+    s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
     return s if len(s) <= n else s[:n] + "…"
 
 

@@ -31,6 +31,8 @@ k32.CloseHandle.restype = wintypes.BOOL
 k32.CloseHandle.argtypes = [wintypes.HANDLE]
 k32.GetTickCount.restype = wintypes.DWORD
 k32.GetTickCount.argtypes = []
+k32.GetCurrentThreadId.restype = wintypes.DWORD
+k32.GetCurrentThreadId.argtypes = []
 adv.OpenProcessToken.restype = wintypes.BOOL
 adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
 adv.GetTokenInformation.restype = wintypes.BOOL
@@ -39,6 +41,10 @@ sh32.IsUserAnAdmin.restype = wintypes.BOOL
 sh32.IsUserAnAdmin.argtypes = []
 u32.OpenInputDesktop.restype = wintypes.HANDLE
 u32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+u32.GetThreadDesktop.restype = wintypes.HANDLE
+u32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+u32.GetUserObjectInformationW.restype = wintypes.BOOL
+u32.GetUserObjectInformationW.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
 u32.CloseDesktop.restype = wintypes.BOOL
 u32.CloseDesktop.argtypes = [wintypes.HANDLE]
 u32.PrintWindow.restype = wintypes.BOOL
@@ -127,6 +133,30 @@ def _process_names() -> set[str]:
     return names
 
 
+def _desktop_name(hdesk) -> str:
+    if not hdesk:
+        return ""
+    buf = ctypes.create_unicode_buffer(256)
+    need = wintypes.DWORD()
+    if u32.GetUserObjectInformationW(hdesk, 2, buf, ctypes.sizeof(buf), ctypes.byref(need)):
+        return buf.value
+    return ""
+
+
+def on_input_desktop() -> bool:
+    """True when the calling thread runs on the active input desktop (False in isolated non-input desktops)."""
+    h_thread = u32.GetThreadDesktop(k32.GetCurrentThreadId())
+    h_input = u32.OpenInputDesktop(0, False, 0x0100)
+    if not h_input:
+        return False
+    try:
+        t_name = _desktop_name(h_thread)
+        i_name = _desktop_name(h_input)
+        return bool(t_name and i_name and t_name.lower() == i_name.lower())
+    finally:
+        u32.CloseDesktop(h_input)
+
+
 def secure_desktop_active() -> bool:
     """True when the input desktop is not the user's (UAC prompt or lock screen)."""
     h = u32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
@@ -151,6 +181,7 @@ def system_state() -> dict:
         "onBattery": on_battery,
         "batteryPercent": None if ps.BatteryLifePercent == 255 else ps.BatteryLifePercent,
         "weAreAdmin": we_are_admin(),
+        "onInputDesktop": on_input_desktop(),
         "ready": not secure,
     }
 

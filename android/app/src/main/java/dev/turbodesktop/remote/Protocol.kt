@@ -21,6 +21,17 @@ object Protocol {
 
     fun canonicalEvent(payload: String): ByteArray = "EVT\n$payload".toByteArray(Charsets.UTF_8)
 
+    /** Parses hub timestamp (ms or legacy seconds) and returns clock skew correction in ms beyond small jitter. */
+    fun computeSkewMs(hubTs: String?, nowMs: Long): Long {
+        val raw = hubTs?.toDoubleOrNull() ?: return 0L
+        if (raw.isNaN() || raw.isInfinite()) return 0L
+        val isMs = raw >= 1e11
+        val hubMs = if (isMs) raw.toLong() else (raw * 1000.0).toLong() + 500L
+        val diff = hubMs - nowMs
+        val deadzoneMs = if (isMs) 50L else 2_000L
+        return if (kotlin.math.abs(diff) > deadzoneMs) diff else 0L
+    }
+
     fun b64(data: ByteArray): String = Base64.getEncoder().encodeToString(data)
     fun unb64(s: String): ByteArray = Base64.getDecoder().decode(s)
 

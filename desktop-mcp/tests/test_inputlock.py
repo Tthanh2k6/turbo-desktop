@@ -125,9 +125,10 @@ def test_hook_lifecycle_banner_and_injected_pass():
         ex = ctypes.windll.user32.GetWindowLongW(wintypes.HWND(lock.banner_hwnd), -20)
         for flag in (il.WS_EX_TOPMOST, il.WS_EX_LAYERED, il.WS_EX_TRANSPARENT, il.WS_EX_NOACTIVATE):
             assert ex & flag
-        send_f24()
-        time.sleep(0.3)
-        assert lock.policy.injected_events >= 2 and lock.policy.physical_events == 0
+        if winsys.on_input_desktop():
+            send_f24()
+            time.sleep(0.3)
+            assert lock.policy.injected_events >= 2 and lock.policy.physical_events == 0
     finally:
         info = lock.release("test")
     assert not info["locked"] and not info["owner_took_over"]
@@ -167,11 +168,14 @@ def test_real_input_reports_owner_took_over(monkeypatch):
     monkeypatch.setenv("TURBO_DESKTOP_NO_INPUT", "0")
     monkeypatch.setenv("TURBO_DESKTOP_IDLE_SECONDS", "1")
     d = Desktop()
-    d.lock = il.InputLock(banner_class="TurboDesktopBannerT5", linger_ms=200)
-    with pytest.raises(ToolError) as e:
-        d.real_input(lambda: d.lock._escape("takeover"))
-    assert e.value.extra["owner_took_over"] is True
-    assert not d.lock.locked
+    try:
+        d.lock = il.InputLock(banner_class="TurboDesktopBannerT5", linger_ms=200)
+        with pytest.raises(ToolError) as e:
+            d.real_input(lambda: d.lock._escape("takeover"))
+        assert e.value.extra["owner_took_over"] is True
+        assert not d.lock.locked
+    finally:
+        d.close_launched()
 
 
 @needs_idle
@@ -198,7 +202,8 @@ def test_hard_kill_takes_hooks_banner_and_glow_with_it():
         h = ctypes.windll.user32.FindWindowW("TurboDesktopGlowKill", None)
         assert not h
         # input flows again: an injected+physical-agnostic probe, our own hook is gone so SendInput F24 works untouched
-        send_f24()
+        if winsys.on_input_desktop():
+            send_f24()
     finally:
         if p.poll() is None:
             p.kill()

@@ -27,8 +27,12 @@ def test_win32_ctypes_signatures_declared():
 
     assert winsys.u32.OpenInputDesktop.restype == wintypes.HANDLE
     assert winsys.u32.OpenInputDesktop.argtypes == [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    assert winsys.u32.GetThreadDesktop.restype == wintypes.HANDLE
+    assert winsys.u32.GetThreadDesktop.argtypes == [wintypes.DWORD]
+    assert winsys.u32.GetUserObjectInformationW.restype == wintypes.BOOL
     assert winsys.u32.CloseDesktop.restype == wintypes.BOOL
     assert winsys.u32.CloseDesktop.argtypes == [wintypes.HANDLE]
+    assert winsys.k32.GetCurrentThreadId.restype == wintypes.DWORD
     assert winsys.k32.OpenProcess.restype == wintypes.HANDLE
     assert winsys.k32.CloseHandle.argtypes == [wintypes.HANDLE]
     assert locking.k32.OpenProcess.restype == wintypes.HANDLE

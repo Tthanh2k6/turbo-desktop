@@ -76,7 +76,7 @@ class HubClient(
         .connectTimeout(6, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build(),
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
-    @Volatile private var skewSeconds = 0L
+    @Volatile private var skewMs = 0L
 
     private fun transports(): List<Pair<String, String>> {
         val all = prefs.urls.filter { it.second.isNotBlank() }
@@ -84,7 +84,7 @@ class HubClient(
         return if (first > 0) listOf(all[first]) + all.filterIndexed { i, _ -> i != first } else all
     }
 
-    private fun ts() = (nowMs() / 1000 + skewSeconds).toString()
+    private fun ts() = (nowMs() + skewMs).toString()
 
     private fun build(
         base: String, label: String, method: String, path: String, body: String?, strong: Boolean,
@@ -111,7 +111,7 @@ class HubClient(
     }
 
     private fun checkReply(status: Int, path: String, body: ByteArray, hubTs: String?, hubSig: String?, nonce: String,
-                           location: String?, label: String, pinned: String): Reply {
+                           location: String?, label: String, pinned: String, replyAtMs: Long = nowMs()): Reply {
         if (status in 300..399 || (location?.contains("cloudflareaccess", true) == true)) {
             throw HubError(ErrKind.ACCESS_LOGIN, "Cloudflare Access needs a login", status)
         }
@@ -119,10 +119,12 @@ class HubClient(
             if (status in 200..299) throw HubError(ErrKind.UNSIGNED, "Unsigned reply: not the hub?", status)
             return Reply(status, String(body), label)
         }
-        if (pinned.isNotBlank() &&
-            !Protocol.verify(pinned, Protocol.canonicalResponse(status, path, body, hubTs, nonce), hubSig)
-        ) throw HubError(ErrKind.BAD_SIGNATURE, "Hub signature invalid: fake endpoint?", status)
-        hubTs.toLongOrNull()?.let { skewSeconds = it - nowMs() / 1000 }
+        if (pinned.isNotBlank()) {
+            if (!Protocol.verify(pinned, Protocol.canonicalResponse(status, path, body, hubTs, nonce), hubSig)) {
+                throw HubError(ErrKind.BAD_SIGNATURE, "Hub signature invalid: fake endpoint?", status)
+            }
+            skewMs = Protocol.computeSkewMs(hubTs, replyAtMs)
+        }
         return Reply(status, String(body), label)
     }
 
@@ -134,10 +136,12 @@ class HubClient(
         for ((label, base) in list) {
             try {
                 val (req, nonce, _) = build(base, label, method, path, body?.toString(), strong, session)
+                val sentAt = nowMs()
                 http.newCall(req).execute().use { r ->
+                    val hdrAt = nowMs()
                     val bytes = r.body?.bytes() ?: ByteArray(0)
                     val reply = checkReply(r.code, path, bytes, r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce,
-                        r.header("Location"), label, prefs.hubKey)
+                        r.header("Location"), label, prefs.hubKey, (sentAt + hdrAt) / 2L)
                     prefs.activePath = label
                     return@withContext reply
                 }
@@ -156,10 +160,11 @@ class HubClient(
         for ((label, base) in list) {
             try {
                 val (req, nonce, _) = build(base, label, "GET", path, null, strong = false, session = session)
+                val sentAt = nowMs()
                 http.newCall(req).execute().use { r ->
                     val bytes = r.body?.bytes() ?: ByteArray(0)
                     checkReply(r.code, path, bytes, r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce,
-                        r.header("Location"), label, prefs.hubKey)
+                        r.header("Location"), label, prefs.hubKey, (sentAt + nowMs()) / 2L)
                     prefs.activePath = label
                     val redacted = r.header("X-Redacted")?.toIntOrNull() ?: 0
                     return@withContext BytesReply(r.code, bytes, label, redacted)
@@ -179,17 +184,22 @@ class HubClient(
             .put("pub", plain.publicKeyB64).put("authPub", auth.publicKeyB64).toString()
         try {
             val (req, nonce, _) = build(normBase, "pair", "POST", "/pair", body, strong = true, session = false, deviceHeader = false)
+            val sentAt = nowMs()
             http.newCall(req).execute().use { r ->
                 val bytes = r.body?.bytes() ?: ByteArray(0)
                 if (r.code != 200) throw HubError(ErrKind.REJECTED, "Pairing refused (${r.code}): ${String(bytes).take(120)}", r.code)
+                val midAt = (sentAt + nowMs()) / 2L
                 val reply = checkReply(200, "/pair", bytes, r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce,
-                    null, "pair", hubKey ?: "")
+                    null, "pair", hubKey ?: "", midAt)
                 val j = reply.json()
                 val got = j.getString("hubPub")
                 if (hubKey != null && got != hubKey) throw HubError(ErrKind.BAD_SIGNATURE, "Hub key differs from the QR")
-                if (hubKey == null && !Protocol.verify(got, Protocol.canonicalResponse(200, "/pair", bytes,
-                        r.header("X-Hub-Ts") ?: "", nonce), r.header("X-Hub-Sig") ?: "")) {
-                    throw HubError(ErrKind.BAD_SIGNATURE, "Reply not signed by the key it announces")
+                if (hubKey == null) {
+                    if (!Protocol.verify(got, Protocol.canonicalResponse(200, "/pair", bytes,
+                            r.header("X-Hub-Ts") ?: "", nonce), r.header("X-Hub-Sig") ?: "")) {
+                        throw HubError(ErrKind.BAD_SIGNATURE, "Reply not signed by the key it announces")
+                    }
+                    skewMs = Protocol.computeSkewMs(r.header("X-Hub-Ts"), midAt)
                 }
                 prefs.hubKey = got
                 prefs.deviceId = j.getString("deviceId")
@@ -205,22 +215,34 @@ class HubClient(
     }
 
     /** Streams signed events (SSE). Blocks until the stream ends; [onEvent] gets each verified event. */
-    suspend fun streamEvents(since: Long, onEvent: suspend (JSONObject) -> Unit) = withContext(Dispatchers.IO) {
-        // the hub sends a heartbeat every 15 s: 45 s of silence means a half-open connection (airplane mode, Wi-Fi roam)
-        val long = http.newBuilder().readTimeout(45, TimeUnit.SECONDS).build()
+    suspend fun streamEvents(
+        since: Long,
+        onConnected: (suspend () -> Unit)? = null,
+        onDisconnected: (() -> Unit)? = null,
+        onEvent: suspend (JSONObject) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        // the hub sends a heartbeat every 15 s: 25 s of silence means a half-open connection (airplane mode, Wi-Fi roam, TCP cut)
+        val long = http.newBuilder().readTimeout(25_000, TimeUnit.MILLISECONDS).build()
         val path = "/events?since=$since"
         val list = transports()
         var last: IOException? = null
         for ((label, base) in list) {
+            var connectedThisAttempt = false
             try {
                 val (req, nonce, _) = build(base, label, "GET", path, null, strong = false, session = true)
+                val sentAt = nowMs()
                 long.newCall(req).execute().use { r ->
+                    val hdrAt = nowMs()
                     if (r.code != 200) {
+                        val errBody = runCatching { r.body?.string().orEmpty() }.getOrDefault("")
                         throw HubError(if (r.code in 300..399) ErrKind.ACCESS_LOGIN else ErrKind.REJECTED,
-                            "events refused (${r.code})", r.code)
+                            "events refused (${r.code}): ${errBody.take(120)}", r.code)
                     }
-                    checkReply(200, path, ByteArray(0), r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce, null, label, prefs.hubKey)
+                    checkReply(200, path, ByteArray(0), r.header("X-Hub-Ts"), r.header("X-Hub-Sig"), nonce,
+                        null, label, prefs.hubKey, (sentAt + hdrAt) / 2L)
                     prefs.activePath = label
+                    connectedThisAttempt = true
+                    onConnected?.invoke()
                     val src = r.body!!.source()
                     while (!src.exhausted()) {
                         val line = src.readUtf8Line() ?: break
@@ -233,8 +255,10 @@ class HubClient(
                         onEvent(JSONObject(payload))
                     }
                 }
+                onDisconnected?.invoke()
                 return@withContext
             } catch (e: IOException) {
+                if (connectedThisAttempt) onDisconnected?.invoke()
                 last = e
             }
         }

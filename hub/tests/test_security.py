@@ -266,6 +266,57 @@ def test_hub_restart_keeps_session_when_persist_is_on(tmp_path):
         assert d.request("GET", "/status").status_code == 401
 
 
+def test_hub_restart_same_second_rejects_old_requests_and_nonces(tmp_path):
+    from fastapi.testclient import TestClient
+    from turbo_hub.app import Settings, create_app
+
+    t = [1_800_000_000.100]
+    clock = lambda: t[0]  # noqa: E731
+    mk = lambda persist: Settings(data_dir=tmp_path / "h", clock=clock, persist_sessions=persist,  # noqa: E731
+                                  loopback_hosts=("127.0.0.1", "testclient"))
+
+    with TestClient(create_app(mk(False))) as http1:
+        hub1 = http1.app.state.hub
+        info = http1.post("/admin/pairing", headers={"X-Admin-Token": hub1.store.admin_token}).json()
+        d = DevClient(http1, hub_pub=info["hubKey"], clock=clock)
+        assert d.pair(info["code"]).status_code == 200
+        assert d.start_session(hub1.store.totp_secret).status_code == 200
+        old_ms = d._headers("GET", "/status", b"", nonce="n-pre-ms")
+        old_sec = d._headers("GET", "/status", b"", ts=str(int(t[0])), nonce="n-pre-sec")
+        assert http1.get("/status", headers=d._headers("GET", "/status", b"", nonce="n-live-1")).status_code == 200
+        assert http1.get("/status", headers=d._headers("GET", "/status", b"", nonce="n-live-1")).status_code == 401
+
+    # Restart only 50 ms later (within the exact same integer second) with persist=False
+    t[0] = 1_800_000_000.150
+    with TestClient(create_app(mk(False))) as http2:
+        assert http2.get("/status", headers=old_ms).status_code == 401
+        assert http2.get("/status", headers=old_sec).status_code == 401
+        d.http = http2
+        assert d.request("GET", "/status").status_code == 401
+        secret = http2.app.state.hub.store.totp_secret
+        assert d.start_session(secret, step_offset=1).status_code == 200
+        assert d.request("GET", "/status").status_code == 200
+        assert d.request("GET", "/status", ts="nan").status_code == 401
+        assert d.request("GET", "/status", ts="1800000000.100").status_code == 401
+
+    # Restart in the next unused 30s TOTP window with persist=True, then restart 50 ms later (same second)
+    t[0] = 1_800_000_060.200
+    with TestClient(create_app(mk(True))) as http3:
+        d.http = http3
+        assert d.start_session(http3.app.state.hub.store.totp_secret).status_code == 200
+        pre_persist = d._headers("GET", "/status", b"", nonce="n-pre-persist")
+        assert http3.get("/status", headers=d._headers("GET", "/status", b"", nonce="n-used-persist")).status_code == 200
+
+    t[0] = 1_800_000_060.250
+    with TestClient(create_app(mk(True))) as http4:
+        d.http = http4
+        assert http4.get("/status", headers=pre_persist).status_code == 401
+        assert http4.get("/status", headers=d._headers("GET", "/status", b"", ts=str(int(t[0])), nonce="n-pre-sec-2")).status_code == 401
+        fresh_h = d._headers("GET", "/status", b"", nonce="n-post-persist")
+        assert http4.get("/status", headers=fresh_h).status_code == 200
+        assert http4.get("/status", headers=fresh_h).status_code == 401
+
+
 def test_events_stream_stops_when_session_revoked(tmp_path):
     import asyncio
     import httpx

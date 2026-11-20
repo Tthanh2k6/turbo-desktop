@@ -137,3 +137,63 @@ Findings:
 - **Automated tests:** 3 consecutive full runs, each 155 passed, 8 skipped, 0 failed. Skips: 6 live hook tests (they run only when the owner has been idle 20 s; two of them, the rapid re-acquire and the hard-kill test, were verified by hand), 2 opt-in real-input tests.
 
 Addendum (17:15): the fourth full run, after the last code changes (persistent lock thread, key chords, window-level `send_text`), finished green: **156 passed, 8 skipped, 0 failed** (it spent 13 of its 13 minutes waiting for the shared lock). Across the four full runs of this round: 155, 155, 155, 156 passed, no failures, no flaky test. The flag file `%TEMP%	urbo-desktop-desk-done.flag` has been written.
+
+## Round 6 (20/11/2026): state bridge fixes, fixture hardening, and all 30 field tasks
+
+Method: `tests/field/run_field.py` spawns `claude -p --model haiku` with `--strict-mcp-config`, `--disallowedTools` blocking every file and shell tool, and an empty temporary working directory. The runner restricts targets to `ALLOWED_TARGETS` (`calc`, `calculator`, `turbo_fixture.exe`, `turbo_editor.exe`, `turbo_canvas.exe`), rejects prompts mentioning Notepad, Explorer, VS Code, Edge, Chrome, Settings, Control Panel, Paint, or Clock, and puts every task's files under `%TEMP%\turbo-field\`. Each run acquires `%TEMP%\turbo-desktop-test.lock` around one task at a time and checks `winsys.idle_seconds() >= 120` plus `winsys.on_input_desktop()` before enabling real input.
+
+### State bridge and release fixes (Part 1)
+
+1. `StateBridge` and `InputLock` now serialize JSON state writes through `security.BRIDGE_LOCK`, retry transient `PermissionError` collisions on Windows atomic replaces and deletes (`unlink_retry`), and emit `indicator.json` (`acting`, `input_locked`, `idle`) whenever `TURBO_DESKTOP_STATE_DIR` is set, including when `TURBO_DESKTOP_NO_INDICATOR=1` hides the Win32 overlay.
+2. `StateBridge.tick()` and `StateBridge.check_release()` process `<state_dir>/RELEASE` immediately by deleting `RELEASE`, clearing `InputLock` with `reason="release"`, calling `indicator.hide_now()`, writing `idle`, and recording `_ignored_sig` so the active task file does not re-lock. `engine.py` calls `check_release()` before actions, batch steps, launches, window controls, and `wait_for` polls.
+3. `server.py` starts `_on_worker(desk)` eagerly on MCP stdio startup when `TURBO_DESKTOP_STATE_DIR` is set so a phone-side `task_active.json` triggers locking before the first tool call arrives. Subprocess E2E tests in `tests/test_state_bridge_e2e.py` pass.
+
+### Bugs found and fixed across the 30 tasks (Part 2)
+
+1. `_split_launch_args` in `engine.py` split on whitespace and broke Windows `--workdir` paths containing spaces (tasks 1, 4, 6, 12, 13). Replaced with `shlex.split(..., posix=False)` and outer-quote unwrapping (`test_split_launch_args_preserves_windows_paths_with_spaces`).
+2. `RichTextBox` appended a synthetic trailing `\r` on UIA readback (task 17) and `TrackBar` (`Slider`) snapped its value immediately on `ValuePattern.SetValue` (task 7). Normalized `\r` in `_clip_keep_nl` plus write verification and exempted `Slider` from strict exact-string post-checks (`test_richtext_multiline_and_slider_set_value`).
+3. Explicit `shell:AppsFolder\...` targets resolved to `how="path"` and raised `WinError 2` (task 8). Updated `resolve_launch_target`, added `onInputDesktop` to `winsys.system_state()`, and added an isolated-desktop launch note (`test_resolve_launch_target_recognizes_shell_appsfolder_explicitly`, `test_system_state_reports_on_input_desktop`).
+4. WinForms `ComboBox` renames its child toggle button from `"Open"` to `"Close"` after expanding, and ignores UIA `Invoke` on `"Close"` while inactive, so `act(action="expand", value="collapse")` failed on task 22. Added `"close"` / `"đóng"` detection plus `win32gui.SendMessage(hwnd, 0x014F, 0, 0)` (`CB_SHOWDROPDOWN`) in `engine.py` (`test_combobox_expand_and_collapse_via_value_collapse`).
+5. `tests/field/run_field.py` now unwraps double-encoded MCP JSON payloads in `_any_result_has` with compact separators, ignores `snapshotError` in `_is_tool_error` when `"ok": true` (task 21 dialog close), catches `subprocess.TimeoutExpired` without dropping subsequent tasks, and uses a non-monotone 600-character payload in task 19 after repeated `'x' * 600` caused `claude.exe` (`haiku`) to stall for 300 s right after `launch_app` (`test_field_transcript_helpers_handle_double_encoded_json_and_snapshot_error`).
+
+### 30-task field results (`claude -p --model haiku`)
+
+All 30 tasks in `FIELD_TASKS.md` ran end-to-end against Calculator (`task 8`) and the rebuilt C# fixtures (`tests/fixtures/build.ps1`), generating hash-chained audit logs (`audit_chain` valid `ok` on all 30 runs).
+
+| Task | Target | Pass | Calls | Turns | In / CacheRead / CacheCreate / Out | Wall (s) | Cost ($) | Verification |
+| :--- | :--- | :--- | ---: | ---: | :--- | ---: | ---: | :--- |
+| 1 | `turbo_editor.exe` | pass | 6 | 7 | 14 / 285,299 / 50,434 / 3,350 | 61.4 | 0.01462 | `a.txt` saved with 3 Vietnamese lines |
+| 2 | `turbo_editor.exe` | pass | 6 | 7 | 12 / 256,913 / 25,616 / 1,288 | 31.2 | 0.00834 | Find & Replace + Undo verified |
+| 3 | `turbo_canvas.exe` | pass | 6 | 7 | 12 / 256,498 / 25,368 / 1,215 | 28.0 | 0.00825 | Saved `800 x 600` PNG on disk |
+| 4 | `turbo_fixture.exe` | pass | 9 | 10 | 20 / 453,808 / 27,450 / 2,297 | 46.7 | 0.01118 | Virtual Explorer folder, rename, Details |
+| 5 | `turbo_fixture.exe` | pass | 7 | 8 | 12 / 262,064 / 26,753 / 1,750 | 35.2 | 0.00885 | 200-item list sorted by size + query |
+| 6 | `turbo_editor.exe` | pass | 7 | 8 | 16 / 350,833 / 25,203 / 1,355 | 24.2 | 0.00923 | Overwrite confirm dialog replaced file |
+| 7 | `turbo_fixture.exe` | pass | 5 | 6 | 12 / 255,454 / 24,868 / 1,159 | 22.8 | 0.00811 | Mouse Preferences slider + Cancel kept `5` |
+| 8 | `calc` | fail | 7 | 8 | 14 / 298,084 / 24,419 / 1,711 | 72.7 | 0.00872 | UWP Calculator invisible on isolated `exebox` desktop |
+| 9 | `turbo_fixture.exe` | pass | 3 | 4 | 8 / 160,290 / 23,344 / 557 | 13.6 | 0.00655 | Read-only Display Scale `100%` and `1920 x 1080` |
+| 10 | `turbo_fixture.exe` | pass | 4 | 5 | 10 / 207,550 / 24,059 / 751 | 19.5 | 0.00726 | Read-only Settings search read `Bluetooth` `On` |
+| 11 | `turbo_fixture.exe` | pass | 4 | 5 | 10 / 208,048 / 24,409 / 1,397 | 22.6 | 0.00766 | Strict timer Add/Start/Delete approval + `allow` |
+| 12 | `turbo_canvas.exe` | pass | 4 | 5 | 8 / 161,177 / 24,152 / 815 | 13.7 | 0.00685 | Viewer reported `800 x 600` |
+| 13 | `turbo_editor.exe` | pass | 5 | 6 | 12 / 258,130 / 26,645 / 2,874 | 34.6 | 0.00935 | Created `hello.py` in `--workdir` |
+| 14 | `turbo_editor.exe` | pass | 11 | 12 | 20 / 446,840 / 25,907 / 1,765 | 25.6 | 0.01053 | Command Palette toggled `Word Wrap: On` |
+| 15 | `turbo_fixture.exe` | pass | 3 | 4 | 8 / 160,543 / 23,674 / 631 | 10.9 | 0.00666 | Nested docview `Example Domain` read |
+| 16 | `turbo_editor.exe` | pass | 4 | 5 | 8 / 160,878 / 24,126 / 828 | 18.8 | 0.00685 | RichText Bold applied to `world` |
+| 17 | `turbo_editor.exe` | pass | 5 | 6 | 10 / 208,393 / 24,736 / 1,873 | 19.7 | 0.00797 | RichText 3-line Vietnamese `\n` preserved |
+| 18 | `turbo_fixture.exe` | pass | 5 | 6 | 10 / 207,676 / 24,639 / 1,236 | 16.7 | 0.00762 | IME string `doodle aa dd Xin chào` intact |
+| 19 | `turbo_fixture.exe` | pass | 5 | 6 | 12 / 259,669 / 25,919 / 1,748 | 20.5 | 0.00866 | 600-char `set_value` + `read` returned `length: 600` |
+| 20 | `turbo_editor.exe`, `turbo_fixture.exe` | pass | 8 | 9 | 14 / 304,084 / 25,599 / 1,593 | 20.5 | 0.00896 | Targeted behind-focus `w1` by `wid` |
+| 21 | `turbo_editor.exe` | pass | 7 | 8 | 14 / 301,776 / 24,508 / 1,006 | 19.2 | 0.00842 | Unsaved Changes modal closed via `Don't Save` |
+| 22 | `turbo_fixture.exe` | pass | 6 | 7 | 14 / 303,401 / 25,086 / 1,042 | 19.7 | 0.00857 | `Country` ComboBox expanded, read, collapsed |
+| 23 | `turbo_editor.exe` | pass | 5 | 6 | 10 / 206,871 / 23,660 / 1,118 | 13.6 | 0.00736 | `.env - Secrets` hidden and denied (`secret-window`) |
+| 24 | `turbo_fixture.exe` | pass | 4 | 5 | 10 / 206,370 / 23,474 / 599 | 15.6 | 0.00706 | `--splash 5.5` awaited via `wait_for` |
+| 25 | `turbo_fixture.exe` | pass | 10 | 11 | 14 / 307,212 / 26,400 / 1,404 | 21.2 | 0.00906 | Targeted 2nd duplicate `TurboFixture` by `wid` |
+| 26 | `turbo_canvas.exe` | pass | 4 | 5 | 8 / 160,963 / 23,763 / 790 | 13.2 | 0.00676 | OCR `[w1:o2]` `"Save"` `@242,228` without clicking |
+| 27 | `turbo_fixture.exe` | pass | 7 | 8 | 14 / 300,842 / 24,195 / 963 | 17.4 | 0.00833 | Minimized, restored, filled `Full name` |
+| 28 | `turbo_fixture.exe` | pass | 8 | 9 | 18 / 400,897 / 25,929 / 1,328 | 24.2 | 0.00986 | Balanced approval `deny` then `allow` via `.decision` |
+| 29 | `turbo_fixture.exe` | pass | 6 | 7 | 8 / 161,369 / 24,789 / 1,080 | 13.0 | 0.00711 | `[password:protected]` denied `read`/`type` + blacked screenshot |
+| 30 | `turbo_fixture.exe` | pass | 2 | 3 | 6 / 114,378 / 23,535 / 1,414 | 19.4 | 0.00656 | Mid-batch `STOP` cancelled `wait_for` (`stopped: true`) |
+| **Total** | | **29 / 30** | **173** | **203** | **358 / 7,626,310 / 772,659 / 40,937** | **735.4** | **0.2513** | All 30 audit chains valid (`ok`) |
+
+Task 8 fails here because commands execute inside an isolated Win32 desktop (`exebox`, `onInputDesktop: false`), while UWP `CalculatorApp.exe` activates on `WinSta0\Default` and never appears in `EnumWindows` on `exebox`. The model diagnosed `onInputDesktop: false` accurately from `system_state`.
+
+Final `pytest` suite (`desktop-mcp/tests`, run after all code edits): **231 passed, 8 skipped in 460.70s** (the 8 skips are 6 live input-hook tests gated on 20 s idle and `on_input_desktop()`, plus 2 opt-in `TURBO_DESKTOP_REAL_INPUT=1` tests).

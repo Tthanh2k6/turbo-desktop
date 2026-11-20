@@ -180,4 +180,15 @@ class ProtocolTest {
         assertTrue(HubJson.isRealInputVia("ocr"))
         assertFalse(HubJson.isRealInputVia("uia"))
     }
+
+    @Test fun skewComputationIgnoresSmallJitterAndCorrectsLargeOffset() {
+        val nowMs = 1_800_000_000_250L
+        assertEquals(0L, Protocol.computeSkewMs("1800000000", nowMs))
+        assertEquals(0L, Protocol.computeSkewMs("1800000001", nowMs))
+        assertEquals(30_250L, Protocol.computeSkewMs("1800000030", nowMs))
+        assertEquals(0L, Protocol.computeSkewMs("1800000000280", nowMs))
+        assertEquals(3_500L, Protocol.computeSkewMs("1800000003750", nowMs))
+        assertEquals(0L, Protocol.computeSkewMs("nan", nowMs))
+        assertEquals(0L, Protocol.computeSkewMs(null, nowMs))
+    }
 }

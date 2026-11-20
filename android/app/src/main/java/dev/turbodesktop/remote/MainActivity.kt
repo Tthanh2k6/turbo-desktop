@@ -58,7 +58,7 @@ class MainActivity : FragmentActivity() {
             "takeover" -> { Graph.takeOver(); log("paused=${Graph.paused.value}") }
             "resume" -> { Graph.resume(); log("stopped=${Graph.stopped.value}") }
             "state" -> log("state online=${Graph.online.value} via=${Graph.via.value} stopped=${Graph.stopped.value} " +
-                "session=${Graph.sessionOpen} left=${Graph.sessionSecondsLeft()} pending=${Graph.pending.value.size} locked=${Graph.inputLocked.value} indicator=${Graph.indicator.value} paused=${Graph.paused.value} " +
+                "session=${Graph.sessionOpen} left=${Graph.sessionSecondsLeft()} pending=${Graph.pending.value.size} locked=${Graph.inputLocked.value} indicator=${Graph.indicator.value} paused=${Graph.paused.value} taskRunning=${Graph.taskRunning.value} topTask=${Graph.tasks.value.firstOrNull()?.optString("status")} " +
                 "crop=${Graph.screenCrop.value?.region?.joinToString(",")} quality=${Graph.screenQuality.value.key} " +
                 "events=${Graph.events.value.size} last=${Graph.events.value.lastOrNull()?.line(this@MainActivity)} status=${Graph.status.value}")
             "decide" -> if (Biometric.authenticate(this@MainActivity))

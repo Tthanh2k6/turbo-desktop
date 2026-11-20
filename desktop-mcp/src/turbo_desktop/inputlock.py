@@ -232,20 +232,21 @@ class InputLock:
         d = sec.bridge_dir(self._state_dir)
         if d is None:
             return
-        reason = self.reason or ("remote_task" if (self.locked and self.remote_task) else ("real_input" if self.locked else "done"))
-        sec.atomic_write_json(d / "input_lock.json", {
-            "locked": bool(self.locked),
-            "mode": self.mode,
-            "since": self.since if self.locked else None,
-            "reason": reason,
-        })
-        if self.indicator is not None:
-            self.indicator.state.set_locked(bool(self.locked))
-            ind_state = self.indicator.state.bridge_state()
-            self.indicator._last_bridge = ind_state
-        else:
-            ind_state = "input_locked" if self.locked else "idle"
-        sec.atomic_write_json(d / "indicator.json", {"state": ind_state})
+        with sec.BRIDGE_LOCK:
+            reason = self.reason or ("remote_task" if (self.locked and self.remote_task) else ("real_input" if self.locked else "done"))
+            sec.atomic_write_json(d / "input_lock.json", {
+                "locked": bool(self.locked),
+                "mode": self.mode,
+                "since": self.since if self.locked else None,
+                "reason": reason,
+            })
+            if self.indicator is not None:
+                self.indicator.state.set_locked(bool(self.locked))
+                ind_state = self.indicator.state.bridge_state()
+                self.indicator._last_bridge = ind_state
+            else:
+                ind_state = "input_locked" if self.locked else "idle"
+            sec.atomic_write_json(d / "indicator.json", {"state": ind_state})
 
     def _ensure_thread(self) -> bool:
         with self._cv:
@@ -265,8 +266,10 @@ class InputLock:
                 self._depth += 1
             self.last_touch = time.monotonic()
             if self.locked:
-                if remote_task or whole_task:
+                changed = False
+                if (remote_task or whole_task) and not self.whole_task:
                     self.set_mode(True)
+                    changed = True
                 if remote_task:
                     self.max_seconds = max(5.0, float(max_seconds))
                     self._text = banner_text or REMOTE_BANNER_TEXT
@@ -276,6 +279,8 @@ class InputLock:
                         u32.SetTimer(self.ctrl_hwnd, T_MAX, int(min(self.max_seconds + 2.0, 86400) * 1000), None)
                     if self.banner_hwnd:
                         u32.InvalidateRect(self.banner_hwnd, None, True)
+                    changed = True
+                if changed:
                     self._write_bridge()
                 return True
             self.max_seconds = max(5.0, float(max_seconds)) if remote_task else clamp_seconds(max_seconds)
@@ -326,7 +331,12 @@ class InputLock:
             self._depth = 0
             self.remote_task = False
         if self.locked:
-            self.reason = self.reason or reason
+            if reason and not (self.taken_over or self.stopped) and (
+                not self.reason or self.reason in ("remote_task", "real_input", "whole_task") or reason == "release"
+            ):
+                self.reason = reason
+            else:
+                self.reason = self.reason or reason
             if self.ctrl_hwnd:
                 u32.PostMessageW(self.ctrl_hwnd, WM_RELEASE, 0, 0)
                 if self._thread is not threading.current_thread():
@@ -434,9 +444,9 @@ class InputLock:
             if self.banner_hwnd:
                 u32.InvalidateRect(self.banner_hwnd, None, True)
                 u32.SetTimer(self.ctrl_hwnd, T_END, self.linger_ms, None)
-        self._write_bridge()
-        if self.indicator is not None and (self.taken_over or self.stopped):
+        if self.indicator is not None and (self.taken_over or self.stopped or self.reason == "release"):
             self.indicator.hide_now()
+        self._write_bridge()
         self._done.set()
 
     def _do_acquire(self, hinst):
@@ -569,7 +579,7 @@ class StateBridge:
     Lock and indicator objects can be mocked or injected in unit tests."""
 
     def __init__(self, lock=None, indicator=None, state_dir: Path | str | None = None,
-                 now=time.time, period: float = 1.0, allow_windows: bool = True):
+                 now=time.time, period: float = 0.2, allow_windows: bool = True):
         self.lock = lock
         self.indicator = indicator
         self.state_dir = Path(state_dir) if state_dir is not None else None
@@ -584,6 +594,7 @@ class StateBridge:
         self._ignored_sig = None
         self._last_lock_snapshot = None
         self._last_ind_state = None
+        self._tick_lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -684,6 +695,8 @@ class StateBridge:
         self._task_since = None
         self._set_ind_locked(False)
         self._set_ind_real(False)
+        if reason in ("release", "owner-esc-x3") and self.indicator is not None and hasattr(self.indicator, "hide_now"):
+            self.indicator.hide_now()
         if self.lock is not None:
             if not isinstance(self.lock, InputLock) or self.allow_windows or getattr(self.lock, "ctrl_hwnd", 0):
                 if respect_real_input and hasattr(self.lock, "release_remote_task"):
@@ -706,26 +719,29 @@ class StateBridge:
                         self.lock._text = SCREEN_VIEW_TEXT
                     except Exception:
                         pass
+        if reason in ("release", "owner-esc-x3") and self.indicator is not None and hasattr(self.indicator, "hide_now"):
+            self.indicator.hide_now()
         self.banner_text = SCREEN_VIEW_TEXT if self.screen_view_active else ""
         self.sync_files(force=True, reason_override=reason)
 
     def takeover(self):
         """Esc x3 while held: release lock and write <state>/owner_took_over.json = {"at": epoch}."""
-        d = self.active_dir()
-        at = round(float(self.now()), 3)
-        if d is not None:
-            tf = d / "task_active.json"
-            if tf.exists():
-                self._ignored_sig = self._sig(sec.read_json_safe(tf))
-            sec.atomic_write_json(d / "owner_took_over.json", {"at": at})
-        if self.lock is not None:
-            try:
-                self.lock.taken_over = True
-            except Exception:
-                pass
-        if self.indicator is not None and hasattr(self.indicator, "hide_now"):
-            self.indicator.hide_now()
-        self._do_release("owner-esc-x3", respect_real_input=False)
+        with self._tick_lock:
+            d = self.active_dir()
+            at = round(float(self.now()), 3)
+            if d is not None:
+                tf = d / "task_active.json"
+                if tf.exists():
+                    self._ignored_sig = self._sig(sec.read_json_safe(tf))
+                sec.atomic_write_json(d / "owner_took_over.json", {"at": at})
+            if self.lock is not None:
+                try:
+                    self.lock.taken_over = True
+                except Exception:
+                    pass
+            if self.indicator is not None and hasattr(self.indicator, "hide_now"):
+                self.indicator.hide_now()
+            self._do_release("owner-esc-x3", respect_real_input=False)
 
     @staticmethod
     def _sig(data: dict | None):
@@ -754,129 +770,142 @@ class StateBridge:
         d = self.active_dir()
         if d is None:
             return
-        locked = bool(getattr(self.lock, "locked", False)) if self.lock is not None else (self.task_locked and self._lock_enabled())
-        mode = getattr(self.lock, "mode", None) or ("whole_task" if (self.task_locked or getattr(self.lock, "whole_task", False)) else "real_input")
-        since = (getattr(self.lock, "since", None) or self._task_since or round(float(self.now()), 3)) if locked else None
-        reason = reason_override or getattr(self.lock, "reason", "") or ("remote_task" if self.task_locked else ("real_input" if locked else "done"))
-        snap = (locked, mode, since, reason)
-        if force or snap != self._last_lock_snapshot or not (d / "input_lock.json").exists():
-            self._last_lock_snapshot = snap
-            sec.atomic_write_json(d / "input_lock.json", {
-                "locked": locked,
-                "mode": mode,
-                "since": since,
-                "reason": reason,
-            })
-        ind_state = self._compute_indicator_state(locked)
-        ind_last = getattr(self.indicator, "_last_bridge", self._last_ind_state) if self.indicator is not None else self._last_ind_state
-        if force or ind_state != self._last_ind_state or ind_state != ind_last or not (d / "indicator.json").exists():
-            self._last_ind_state = ind_state
-            if self.indicator is not None:
-                try:
-                    self.indicator._last_bridge = ind_state
-                except Exception:
-                    pass
-            sec.atomic_write_json(d / "indicator.json", {"state": ind_state})
+        with sec.BRIDGE_LOCK:
+            locked = bool(getattr(self.lock, "locked", False)) if self.lock is not None else (self.task_locked and self._lock_enabled())
+            mode = getattr(self.lock, "mode", None) or ("whole_task" if (self.task_locked or getattr(self.lock, "whole_task", False)) else "real_input")
+            since = (getattr(self.lock, "since", None) or self._task_since or round(float(self.now()), 3)) if locked else None
+            reason = reason_override or getattr(self.lock, "reason", "") or ("remote_task" if self.task_locked else ("real_input" if locked else "done"))
+            snap = (locked, mode, since, reason)
+            if force or snap != self._last_lock_snapshot or not (d / "input_lock.json").exists():
+                self._last_lock_snapshot = snap
+                sec.atomic_write_json(d / "input_lock.json", {
+                    "locked": locked,
+                    "mode": mode,
+                    "since": since,
+                    "reason": reason,
+                })
+            ind_state = self._compute_indicator_state(locked)
+            ind_last = getattr(self.indicator, "_last_bridge", self._last_ind_state) if self.indicator is not None else self._last_ind_state
+            if force or ind_state != self._last_ind_state or ind_state != ind_last or not (d / "indicator.json").exists():
+                self._last_ind_state = ind_state
+                if self.indicator is not None:
+                    try:
+                        self.indicator._last_bridge = ind_state
+                    except Exception:
+                        pass
+                sec.atomic_write_json(d / "indicator.json", {"state": ind_state})
+
+    def check_release(self) -> bool:
+        """Immediately honour <state>/RELEASE if present: delete file, unlock, hide indicator, ignore current task."""
+        d = self.active_dir()
+        if d is None:
+            return False
+        rel = d / "RELEASE"
+        if not rel.exists():
+            return False
+        with self._tick_lock:
+            if not rel.exists():
+                return False
+            sec.unlink_retry(rel)
+            tf = d / "task_active.json"
+            if tf.exists():
+                self._ignored_sig = self._sig(sec.read_json_safe(tf))
+            if self.indicator is not None and hasattr(self.indicator, "hide_now"):
+                self.indicator.hide_now()
+            self._do_release("release", respect_real_input=False)
+            return True
 
     def tick(self):
         d = self.active_dir()
         if d is None:
             return
-        now = float(self.now())
+        with self._tick_lock:
+            now = float(self.now())
 
-        # 1. Honour <state>/RELEASE immediately and delete the file
-        rel = d / "RELEASE"
-        if rel.exists():
-            try:
-                rel.unlink()
-            except OSError:
-                pass
+            # 1. Honour <state>/RELEASE immediately and delete the file
+            if self.check_release():
+                return
+
+            # 2. Check if the lock itself recorded a physical Esc x3 takeover
+            if self.lock is not None and getattr(self.lock, "taken_over", False):
+                self.lock.taken_over = False
+                self.takeover()
+                return
+
+            # 3. Check <state>/task_active.json
             tf = d / "task_active.json"
-            if tf.exists():
-                self._ignored_sig = self._sig(sec.read_json_safe(tf))
-            self._do_release("release", respect_real_input=False)
-            return
-
-        # 2. Check if the lock itself recorded a physical Esc x3 takeover
-        if self.lock is not None and getattr(self.lock, "taken_over", False):
-            self.lock.taken_over = False
-            self.takeover()
-            return
-
-        # 3. Check <state>/task_active.json
-        tf = d / "task_active.json"
-        present = tf.exists()
-        data = sec.read_json_safe(tf) if present else None
-        if present and data is None:
-            pass   # the hub is replacing the file right now (Windows sharing): keep the current state for one tick
-        elif data is None:
-            self._ignored_sig = None
-            if self.task_locked or getattr(self.lock, "remote_task", False):
-                self._do_release("task-ended", respect_real_input=True)
-            elif self._leftover_lock():
-                self._do_release("task-ended", respect_real_input=False)
-        else:
-            sig = self._sig(data)
-            if self._ignored_sig is not None and sig != self._ignored_sig:
+            present = tf.exists()
+            data = sec.read_json_safe(tf) if present else None
+            if present and data is None:
+                pass   # the hub is replacing the file right now (Windows sharing): keep the current state for one tick
+            elif data is None:
                 self._ignored_sig = None
-            hb_raw = data.get("heartbeat")
-            try:
-                hb = float(hb_raw) if hb_raw is not None else None
-            except (TypeError, ValueError):
-                hb = None
-            stale = hb is None or (now - hb) >= 15.0
-            try:
-                max_minutes = float(data.get("max_minutes", 15))
-            except (TypeError, ValueError):
-                max_minutes = 15.0
-            task_id = data.get("task", "")
-            try:
-                since_val = float(data["since"]) if "since" in data and data["since"] is not None else (
-                    self._task_since if (self.task_locked and task_id == self._task_id and self._task_since is not None) else now
-                )
-            except (TypeError, ValueError):
-                since_val = self._task_since or now
-            exceeded = (now - since_val) >= (max_minutes * 60.0)
-
-            if stale:
                 if self.task_locked or getattr(self.lock, "remote_task", False):
-                    self._do_release("stale-heartbeat", respect_real_input=True)
-            elif exceeded:
-                if self.task_locked or getattr(self.lock, "remote_task", False):
-                    self._do_release("max-minutes", respect_real_input=True)
-            elif self._ignored_sig is None:
-                need_acq = not self.task_locked or (self._lock_enabled() and self.lock is not None and not getattr(self.lock, "locked", False))
-                self.task_locked = True
-                self._task_id = task_id
-                self._task_since = since_val
-                if need_acq:
-                    self._do_acquire_task(max_seconds=max_minutes * 60.0, since=since_val)
-                else:
-                    self._set_ind_locked(True)
-
-        # 4. Check <state>/screen_view.json
-        svf = d / "screen_view.json"
-        sv = sec.read_json_safe(svf) if svf.exists() else None
-        viewing = False
-        if isinstance(sv, dict) and "until" in sv:
-            try:
-                viewing = float(sv["until"]) > now
-            except (TypeError, ValueError):
-                viewing = False
-        if viewing != self.screen_view_active:
-            self.screen_view_active = viewing
-            if self.lock is not None and hasattr(self.lock, "set_screen_view"):
-                self.lock.set_screen_view(viewing, start_thread=self.allow_windows)
-            elif self.lock is not None and not getattr(self.lock, "locked", False):
+                    self._do_release("task-ended", respect_real_input=True)
+                elif self._leftover_lock():
+                    self._do_release("task-ended", respect_real_input=False)
+            else:
+                sig = self._sig(data)
+                if self._ignored_sig is not None and sig != self._ignored_sig:
+                    self._ignored_sig = None
+                hb_raw = data.get("heartbeat")
                 try:
-                    self.lock._text = SCREEN_VIEW_TEXT if viewing else BANNER_TEXT
-                except Exception:
-                    pass
-            if not self.task_locked and not getattr(self.lock, "locked", False):
-                self.banner_text = SCREEN_VIEW_TEXT if viewing else ""
+                    hb = float(hb_raw) if hb_raw is not None else None
+                except (TypeError, ValueError):
+                    hb = None
+                stale = hb is None or (now - hb) >= 15.0
+                try:
+                    max_minutes = float(data.get("max_minutes", 15))
+                except (TypeError, ValueError):
+                    max_minutes = 15.0
+                task_id = data.get("task", "")
+                try:
+                    since_val = float(data["since"]) if "since" in data and data["since"] is not None else (
+                        self._task_since if (self.task_locked and task_id == self._task_id and self._task_since is not None) else now
+                    )
+                except (TypeError, ValueError):
+                    since_val = self._task_since or now
+                exceeded = (now - since_val) >= (max_minutes * 60.0)
 
-        # 5. Keep bridge files in sync
-        self.sync_files()
+                if stale:
+                    if self.task_locked or getattr(self.lock, "remote_task", False):
+                        self._do_release("stale-heartbeat", respect_real_input=True)
+                elif exceeded:
+                    if self.task_locked or getattr(self.lock, "remote_task", False):
+                        self._do_release("max-minutes", respect_real_input=True)
+                elif self._ignored_sig is None:
+                    need_acq = not self.task_locked or (self._lock_enabled() and self.lock is not None and not getattr(self.lock, "locked", False))
+                    self.task_locked = True
+                    self._task_id = task_id
+                    self._task_since = since_val
+                    if need_acq:
+                        self._do_acquire_task(max_seconds=max_minutes * 60.0, since=since_val)
+                    else:
+                        self._set_ind_locked(True)
+
+            # 4. Check <state>/screen_view.json
+            svf = d / "screen_view.json"
+            sv = sec.read_json_safe(svf) if svf.exists() else None
+            viewing = False
+            if isinstance(sv, dict) and "until" in sv:
+                try:
+                    viewing = float(sv["until"]) > now
+                except (TypeError, ValueError):
+                    viewing = False
+            if viewing != self.screen_view_active:
+                self.screen_view_active = viewing
+                if self.lock is not None and hasattr(self.lock, "set_screen_view"):
+                    self.lock.set_screen_view(viewing, start_thread=self.allow_windows)
+                elif self.lock is not None and not getattr(self.lock, "locked", False):
+                    try:
+                        self.lock._text = SCREEN_VIEW_TEXT if viewing else BANNER_TEXT
+                    except Exception:
+                        pass
+                if not self.task_locked and not getattr(self.lock, "locked", False):
+                    self.banner_text = SCREEN_VIEW_TEXT if viewing else ""
+
+            # 5. Keep bridge files in sync
+            self.sync_files()
 
     def start(self):
         global _DEFAULT_BRIDGE
