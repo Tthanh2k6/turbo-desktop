@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.tthanh2k6/turbo-desktop-mcp",
+  "description": "Windows UIA-based MCP server for driving native desktop apps with compact control trees, delta diffs, OCR fallback, and default-blocked destructive actions.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/Tthanh2k6/turbo-desktop",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "turbo-desktop-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
