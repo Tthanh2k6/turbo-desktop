@@ -131,6 +131,7 @@ def secret_reason(title: str | None, process: str | None = None) -> str | None:
 
 # ---------------------------------------------------------------- classification (data in rules/*.toml)
 
+from . import i18n  # noqa: E402
 from . import rules as _rules  # noqa: E402
 
 Classification = _rules.Decision
@@ -148,10 +149,18 @@ def is_denied_window(process: str | None, title: str | None, class_name: str | N
     return None
 
 
-PROMPT_TITLE = "turbo-desktop: approve action?"
-
 # Dialogs that ask the OWNER to approve something an AI wants to do (hub/scripts/cc_permission_hook.py and local_prompt).
-OWNER_APPROVAL_TITLES = {"claude code cần duyệt", "claude code needs approval", PROMPT_TITLE.lower()}
+OWNER_APPROVAL_TITLES = {
+    "claude code cần duyệt",
+    "claude code needs approval",
+    *(t.lower() for t in i18n.all_variants("prompt_title")),
+}
+
+
+def __getattr__(name: str):
+    if name == "PROMPT_TITLE":
+        return i18n.msg("prompt_title")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def classify_action(*, process: str | None, window_title: str | None, control_name: str | None = None,
@@ -285,14 +294,12 @@ def approver_connected(max_age: float = 15.0) -> bool:
 def local_prompt(summary: dict, timeout: float = 120.0) -> bool:
     """Standalone fallback when no phone/hub is connected: a Windows Yes/No box. Times out to deny."""
     import ctypes
-    text = (f"The AI wants to {summary.get('action')} \"{summary.get('control') or '?'}\" in "
-            f"\"{summary.get('window') or '?'}\".\n\nWhy you are asked: {summary.get('reason')} "
-            f"(rule: {summary.get('rule')})\n\nAllow this one action?")
+    title, text = i18n.format_approval_prompt(summary)
     box = {}
 
     def run():
         # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST
-        box["r"] = ctypes.windll.user32.MessageBoxW(0, text, PROMPT_TITLE, 0x4 | 0x30 | 0x100 | 0x10000 | 0x40000)
+        box["r"] = ctypes.windll.user32.MessageBoxW(0, text, title, 0x4 | 0x30 | 0x100 | 0x10000 | 0x40000)
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
@@ -301,9 +308,10 @@ def local_prompt(summary: dict, timeout: float = 120.0) -> bool:
         try:
             import win32con
             import win32gui
-            h = win32gui.FindWindow(None, PROMPT_TITLE)
-            if h:
-                win32gui.PostMessage(h, win32con.WM_COMMAND, 7, 0)  # IDNO (a Yes/No box ignores WM_CLOSE)
+            for cand in ({title} | i18n.all_variants("prompt_title")):
+                h = win32gui.FindWindow(None, cand)
+                if h:
+                    win32gui.PostMessage(h, win32con.WM_COMMAND, 7, 0)  # IDNO (a Yes/No box ignores WM_CLOSE)
             t.join(2)
         except Exception:
             pass

@@ -314,8 +314,8 @@ def test_screen_view_banner_without_lock(tmp_path):
     assert bridge.screen_view_active is True
     assert lock.screen_view is True
     assert lock.locked is False
-    assert lock._text == il.SCREEN_VIEW_TEXT == "Điện thoại đang xem màn hình"
-    assert bridge.banner_text == "Điện thoại đang xem màn hình"
+    assert lock._text == il.SCREEN_VIEW_TEXT == "Phone is viewing the screen"
+    assert bridge.banner_text == "Phone is viewing the screen"
 
     # Once `until` is in the past, the banner is hidden
     clock.t = 6006.0

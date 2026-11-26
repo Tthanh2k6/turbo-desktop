@@ -26,6 +26,7 @@ import win32api
 import win32con
 import win32gui
 
+from . import i18n
 from . import rules as rules_mod
 from . import security as sec
 from . import border as border_mod
@@ -503,7 +504,7 @@ class Desktop:
     def _guard_window(self, d: dict, action: str, uia: bool = True):
         if sec.stop_requested():
             self.indicator.hide_now()
-            raise ToolError("emergency stop active: all actions blocked until resumed from the phone", stopped=True)
+            raise ToolError(i18n.msg("stop_active_error"), stopped=True)
         t = self._pending_invokes.get(d.get("pid")) if uia and action != "close" else None
         if t is not None:
             if t.is_alive():
@@ -516,12 +517,12 @@ class Desktop:
             self._pending_invokes.pop(d.get("pid"), None)
         if d.get("secret"):
             self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, rule="secret-window")
-            raise ToolError("secret window: its contents are never read or acted on", denied="secret-window", rule="secret-window")
+            raise ToolError(i18n.msg("secret_window_error"), denied="secret-window", rule="secret-window")
         if d.get("denied"):
             self.audit.write(event="denied", window=d["title"], process=d["process"], action=action, reason=d["denied"])
             raise ToolError(d["denied"], denied=True)
         if d.get("elevated") and action != "inspect":
-            raise ToolError("window belongs to an elevated process; UIPI blocks input from a normal process",
+            raise ToolError(i18n.msg("elevated_window_error"),
                             elevated=True, actionable=False)
 
     # ------------------------------------------------------------ snapshot
@@ -849,7 +850,7 @@ class Desktop:
             if idle >= need or (time.time() - self._own_input_at) < idle:
                 return
             if time.time() >= end:
-                raise OwnerBusy(f"owner is using the PC (input {idle:.1f}s ago); real input refused", ownerBusy=True)
+                raise OwnerBusy(i18n.msg("owner_busy_error", idle=idle), ownerBusy=True)
             self.sleep(0.25)
 
     def real_input(self, fn):
@@ -892,8 +893,8 @@ class Desktop:
                     self.indicator.hide_now()
                 self.audit.write(event="input_lock", state="off" if not info["locked"] else "held", **info)
                 if info["owner_took_over"] or info["stopped"]:
-                    raise ToolError("the owner took the keyboard and mouse back (Esc x3): run paused" if info["owner_took_over"]
-                                    else "STOP hotkey pressed: all actions blocked",
+                    raise ToolError(i18n.msg("takeover_error") if info["owner_took_over"]
+                                    else i18n.msg("stop_hotkey_error"),
                                     owner_took_over=bool(info["owner_took_over"]), stopped=bool(info["stopped"]))
 
     def _ind_activity(self):
@@ -1009,7 +1010,7 @@ class Desktop:
             before = self._thumb(d, c, "before")
             ok, approval = sec.request_approval(self.audit, {**base, "reason": cls.reason, "rule": cls.rule, "thumb": before})
             if not ok:
-                raise ToolError(f"approval denied or timed out: {cls.reason}", approval="deny", approvalId=approval, rule=cls.rule)
+                raise ToolError(i18n.msg("approval_denied_error", reason=cls.reason), approval="deny", approvalId=approval, rule=cls.rule)
         try:
             via, extra = self._do(d, w, c, ocr, action, text, value, keys, direction, amount, info)
         except ToolError as e:
@@ -1446,7 +1447,7 @@ class Desktop:
             self.bridge.check_release()
             if sec.stop_requested():  # field bug 4: STOP during a long wait was ignored
                 self.indicator.hide_now()
-                raise ToolError("emergency stop active: wait cancelled", stopped=True)
+                raise ToolError(i18n.msg("stop_wait_error"), stopped=True)
             if window is None and title:
                 found = any(title.lower() in d["title"].lower() for d in self.windows_list())
                 if found != bool(gone):
@@ -1508,7 +1509,7 @@ class Desktop:
         self._ind_activity()
         if sec.stop_requested():
             self.indicator.hide_now()
-            raise ToolError("emergency stop active", stopped=True)
+            raise ToolError(i18n.msg("stop_launch_error"), stopped=True)
         t = APP_ALIASES.get(target.lower(), target)
         resolved = resolve_launch_target(target)
         how = resolved["how"] if resolved else "path"
@@ -1562,7 +1563,7 @@ class Desktop:
         if cls.level == "ask":
             ok, aid = sec.request_approval(self.audit, {**base, "reason": cls.reason, "rule": cls.rule})
             if not ok:
-                raise ToolError(f"approval denied or timed out: {cls.reason}", approval="deny", rule=cls.rule)
+                raise ToolError(i18n.msg("approval_denied_error", reason=cls.reason), approval="deny", rule=cls.rule)
         before_list = self.windows_list()
         before = {d["hwnd"] for d in before_list}
         proc = None

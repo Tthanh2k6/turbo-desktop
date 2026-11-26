@@ -12,7 +12,9 @@ from pathlib import Path
 
 PRESETS = ("easy", "balanced", "strict")
 READ_ONLY_ACTIONS = {"read", "scroll", "focus", "expand", "wait", "inspect"}
-DEFAULT_RULES_FILE = Path(__file__).resolve().parents[2] / "rules" / "default_rules.toml"
+_REPO_RULES_FILE = Path(__file__).resolve().parents[2] / "rules" / "default_rules.toml"
+_PKG_RULES_FILE = Path(__file__).resolve().parent / "rules" / "default_rules.toml"
+DEFAULT_RULES_FILE = _REPO_RULES_FILE if _REPO_RULES_FILE.is_file() else _PKG_RULES_FILE
 
 
 @dataclass

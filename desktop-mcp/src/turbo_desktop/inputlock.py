@@ -22,13 +22,40 @@ from contextlib import contextmanager
 from ctypes import wintypes
 from pathlib import Path
 
+from . import i18n
 from . import security as sec
 
-BANNER_TEXT = "AI đang điều khiển máy · bàn phím/chuột tạm khoá · Esc ×3 để lấy lại · Ctrl+Alt+Shift+K để dừng"
-REMOTE_BANNER_TEXT = "AI đang làm việc theo lệnh từ điện thoại · Esc ×3 để lấy lại · Ctrl+Alt+Shift+K để dừng"
-SCREEN_VIEW_TEXT = "Điện thoại đang xem màn hình"
-END_TEXT = "Đã trả lại bàn phím và chuột cho bạn"
 BANNER_CLASS = "TurboDesktopBanner"
+
+_DYNAMIC_TEXTS = {
+    "BANNER_TEXT": "banner",
+    "REMOTE_BANNER_TEXT": "remote_banner",
+    "SCREEN_VIEW_TEXT": "screen_view",
+    "END_TEXT": "end_notice",
+}
+
+
+def banner_text() -> str:
+    return i18n.msg("banner")
+
+
+def remote_banner_text() -> str:
+    return i18n.msg("remote_banner")
+
+
+def screen_view_text() -> str:
+    return i18n.msg("screen_view")
+
+
+def end_text() -> str:
+    return i18n.msg("end_notice")
+
+
+def __getattr__(name: str):
+    key = _DYNAMIC_TEXTS.get(name)
+    if key is not None:
+        return i18n.msg(key)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 LLKHF_INJECTED = 0x10
 LLMHF_INJECTED = 0x01
@@ -213,7 +240,7 @@ class InputLock:
         self.last_touch = time.monotonic()
         self.linger_ms = linger_ms
         self.banner_class = banner_class
-        self._text = BANNER_TEXT
+        self._text = banner_text()
         self._depth = 0
         self._hooks: list = []
         self._procs: list = []  # ctypes callbacks live as long as the lock object
@@ -272,7 +299,7 @@ class InputLock:
                     changed = True
                 if remote_task:
                     self.max_seconds = max(5.0, float(max_seconds))
-                    self._text = banner_text or REMOTE_BANNER_TEXT
+                    self._text = banner_text or remote_banner_text()
                     if reason:
                         self.reason = reason
                     if self.ctrl_hwnd:
@@ -289,7 +316,7 @@ class InputLock:
             self.reason = reason
             self.since = round(time.time(), 3)
             self.policy = Policy()
-            self._text = banner_text or (REMOTE_BANNER_TEXT if remote_task else BANNER_TEXT)
+            self._text = banner_text or (remote_banner_text() if remote_task else globals()["banner_text"]())
             self._ready.clear()
             self._done.clear()
             if self._thread is None or not self._thread.is_alive():
@@ -319,7 +346,7 @@ class InputLock:
         if still_real and self.locked:
             self.set_mode(False)
             self.reason = ""
-            self._text = BANNER_TEXT
+            self._text = banner_text()
             if self.banner_hwnd:
                 u32.InvalidateRect(self.banner_hwnd, None, True)
             self._write_bridge()
@@ -357,16 +384,16 @@ class InputLock:
         return self.info()
 
     def set_screen_view(self, active: bool, start_thread: bool = True):
-        """Show or hide the small 'Điện thoại đang xem màn hình' banner without locking input."""
+        """Show or hide the small 'Phone is viewing the screen' banner without locking input."""
         self.screen_view = bool(active)
         if self.screen_view:
             if not self.locked:
-                self._text = SCREEN_VIEW_TEXT
+                self._text = screen_view_text()
                 if start_thread and self._ensure_thread() and self.ctrl_hwnd:
                     u32.PostMessageW(self.ctrl_hwnd, WM_SCREEN_VIEW, 1, 0)
         else:
-            if not self.locked and self._text == SCREEN_VIEW_TEXT:
-                self._text = BANNER_TEXT
+            if not self.locked and i18n.is_msg("screen_view", self._text):
+                self._text = banner_text()
                 if self.ctrl_hwnd:
                     u32.PostMessageW(self.ctrl_hwnd, WM_SCREEN_VIEW, 0, 0)
 
@@ -440,7 +467,7 @@ class InputLock:
             self._hooks = []
             u32.KillTimer(self.ctrl_hwnd, T_MAX)
             u32.KillTimer(self.ctrl_hwnd, T_LINGER)
-            self._text = END_TEXT
+            self._text = end_text()
             if self.banner_hwnd:
                 u32.InvalidateRect(self.banner_hwnd, None, True)
                 u32.SetTimer(self.ctrl_hwnd, T_END, self.linger_ms, None)
@@ -477,7 +504,7 @@ class InputLock:
         if self.locked:
             return
         if self.screen_view:
-            self._text = SCREEN_VIEW_TEXT
+            self._text = screen_view_text()
             u32.KillTimer(self.ctrl_hwnd, T_END)
             if not self.banner_hwnd:
                 self._create_banner_window(hinst, width_cap=420, height=34)
@@ -495,7 +522,7 @@ class InputLock:
                 hdc = u32.BeginPaint(hwnd, ctypes.byref(ps))
                 rc = wintypes.RECT()
                 u32.GetClientRect(hwnd, ctypes.byref(rc))
-                color = 0x00202080 if self.locked else (0x00604020 if self._text == SCREEN_VIEW_TEXT else 0x00406020)
+                color = 0x00202080 if self.locked else (0x00604020 if i18n.is_msg("screen_view", self._text) else 0x00406020)
                 brush = g32.CreateSolidBrush(color)
                 u32.FillRect(hdc, ctypes.byref(rc), brush)
                 g32.DeleteObject(brush)
@@ -649,7 +676,8 @@ class StateBridge:
             self.indicator.state.set_real_input(v)
 
     def _do_acquire_task(self, max_seconds: float, since: float):
-        self.banner_text = REMOTE_BANNER_TEXT
+        r_text = remote_banner_text()
+        self.banner_text = r_text
         if not self._lock_enabled():
             self._set_ind_real(True)
             return
@@ -659,14 +687,14 @@ class StateBridge:
         if not isinstance(self.lock, InputLock) or self.allow_windows:
             try:
                 self.lock.acquire(max_seconds=max_seconds, whole_task=True, remote_task=True,
-                                  banner_text=REMOTE_BANNER_TEXT, reason="remote_task")
+                                  banner_text=r_text, reason="remote_task")
             except TypeError:
                 try:
                     self.lock.acquire(max_seconds, True)
                 except TypeError:
                     self.lock.acquire()
         for k, v in (("locked", True), ("whole_task", True), ("remote_task", True), ("mode", "whole_task"),
-                     ("since", since), ("reason", "remote_task"), ("_text", REMOTE_BANNER_TEXT), ("max_seconds", max_seconds)):
+                     ("since", since), ("reason", "remote_task"), ("_text", r_text), ("max_seconds", max_seconds)):
             try:
                 setattr(self.lock, k, v)
             except Exception:
@@ -678,16 +706,17 @@ class StateBridge:
             self._task_id = None
             self._task_since = None
             self._set_ind_locked(False)   # the running real-input action re-sets it from the lock when it ends
+            b_text = banner_text()
             if self.lock is not None:
                 if hasattr(self.lock, "release_remote_task") and (not isinstance(self.lock, InputLock) or self.allow_windows):
                     self.lock.release_remote_task(reason)
                 for k, v in (("remote_task", False), ("whole_task", False), ("mode", "real_input"),
-                             ("reason", "real_input"), ("_text", BANNER_TEXT)):
+                             ("reason", "real_input"), ("_text", b_text)):
                     try:
                         setattr(self.lock, k, v)
                     except Exception:
                         pass
-            self.banner_text = BANNER_TEXT
+            self.banner_text = b_text
             self.sync_files(force=True)
             return
         self.task_locked = False
@@ -697,6 +726,7 @@ class StateBridge:
         self._set_ind_real(False)
         if reason in ("release", "owner-esc-x3") and self.indicator is not None and hasattr(self.indicator, "hide_now"):
             self.indicator.hide_now()
+        sv_text = screen_view_text()
         if self.lock is not None:
             if not isinstance(self.lock, InputLock) or self.allow_windows or getattr(self.lock, "ctrl_hwnd", 0):
                 if respect_real_input and hasattr(self.lock, "release_remote_task"):
@@ -716,12 +746,12 @@ class StateBridge:
                     self.lock.set_screen_view(True, start_thread=self.allow_windows)
                 else:
                     try:
-                        self.lock._text = SCREEN_VIEW_TEXT
+                        self.lock._text = sv_text
                     except Exception:
                         pass
         if reason in ("release", "owner-esc-x3") and self.indicator is not None and hasattr(self.indicator, "hide_now"):
             self.indicator.hide_now()
-        self.banner_text = SCREEN_VIEW_TEXT if self.screen_view_active else ""
+        self.banner_text = sv_text if self.screen_view_active else ""
         self.sync_files(force=True, reason_override=reason)
 
     def takeover(self):
@@ -894,15 +924,16 @@ class StateBridge:
                     viewing = False
             if viewing != self.screen_view_active:
                 self.screen_view_active = viewing
+                sv_text = screen_view_text()
                 if self.lock is not None and hasattr(self.lock, "set_screen_view"):
                     self.lock.set_screen_view(viewing, start_thread=self.allow_windows)
                 elif self.lock is not None and not getattr(self.lock, "locked", False):
                     try:
-                        self.lock._text = SCREEN_VIEW_TEXT if viewing else BANNER_TEXT
+                        self.lock._text = sv_text if viewing else banner_text()
                     except Exception:
                         pass
                 if not self.task_locked and not getattr(self.lock, "locked", False):
-                    self.banner_text = SCREEN_VIEW_TEXT if viewing else ""
+                    self.banner_text = sv_text if viewing else ""
 
             # 5. Keep bridge files in sync
             self.sync_files()

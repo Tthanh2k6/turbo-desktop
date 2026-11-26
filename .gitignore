@@ -1,6 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+*.egg-info/
+.kotlin/
+dist/
+build/
 android/.gradle/
 android/build/
 android/app/build/
