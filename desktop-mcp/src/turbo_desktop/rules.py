@@ -32,6 +32,7 @@ class RuleSet:
     preset: str = "easy"
     rules: list = field(default_factory=list)
     allowlist: set = field(default_factory=set)
+    exclude_processes: set = field(default_factory=set)
     session_restore: set = field(default_factory=set)
     indicator: dict = field(default_factory=lambda: {"border": True, "color": "#E0461D"})
     secret_patterns: list = field(default_factory=list)
@@ -86,6 +87,9 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
     allow = {a.lower() for a in default.get("apps", {}).get("allowlist", [])}
     for apps_sec in (user.get("apps", {}), section.get("apps", {})):
         allow |= {a.lower() for a in apps_sec.get("allowlist", [])}
+    excl = _norm_proc_set(default.get("apps", {}).get("exclude_processes", []))
+    for apps_sec in (user.get("apps", {}), section.get("apps", {})):
+        excl |= _norm_proc_set(apps_sec.get("exclude_processes", []))
     sr = {a.lower() for a in default.get("apps", {}).get("session_restore", {}).get("processes", [])}
     for apps_sec in (user.get("apps", {}), section.get("apps", {})):
         sr |= {a.lower() for a in apps_sec.get("session_restore", {}).get("processes", [])}
@@ -95,7 +99,7 @@ def build_ruleset(default: dict, user: dict | None = None, preset: str | None = 
     if mode not in ("off", "real_input", "whole_task"):
         mode = il_def.get("mode", {}).get(chosen, "real_input")
     secs = il_user.get("max_seconds", il_def.get("max_seconds", 60))
-    rs = RuleSet(chosen, rules, allow, sr)
+    rs = RuleSet(chosen, rules, allow, excl, sr)
     secrets_sec = section.get("secrets") or user.get("secrets") or {}
     rs.secret_patterns = [str(x) for x in secrets_sec.get("patterns", [])]   # additions only
     ind_def = default.get("indicator", {})
@@ -111,7 +115,9 @@ _cache: dict = {"key": None, "rs": None}
 
 def load_ruleset(preset: str | None = None, config_path=None) -> RuleSet:
     cfg = Path(config_path) if config_path else find_user_config()
-    key = (preset, str(cfg), cfg.stat().st_mtime if cfg else 0, os.environ.get("TURBO_DESKTOP_PRESET"),
+    st = cfg.stat() if cfg else None
+    key = (preset, str(cfg), st.st_mtime_ns if st else 0, st.st_size if st else 0,
+           os.environ.get("TURBO_DESKTOP_PRESET"), os.environ.get("TURBO_DESKTOP_EXCLUDE_PROCESSES"),
            DEFAULT_RULES_FILE.stat().st_mtime)
     if _cache["key"] == key:
         return _cache["rs"]
@@ -160,6 +166,37 @@ def fold_process_name(name: str | None) -> str:
         if s.endswith(suf) and len(s) > len(suf):
             s = s[:-len(suf)].strip()
     return re.sub(r"[\s()]+", "", s)
+
+
+def _norm_proc_set(items) -> set[str]:
+    out: set[str] = set()
+    for a in items or ():
+        s = str(a).strip().lower().removesuffix(".exe")
+        if s:
+            out.add(s)
+            folded = fold_process_name(s)
+            if folded:
+                out.add(folded)
+                if folded in DISPLAY_PROCESS_ALIASES:
+                    out.add(DISPLAY_PROCESS_ALIASES[folded])
+    return out
+
+
+def is_excluded_process(process: str | None, ruleset: RuleSet | None = None) -> bool:
+    """True when `process` is listed in `[desktop.apps] exclude_processes` or `TURBO_DESKTOP_EXCLUDE_PROCESSES`."""
+    if not process:
+        return False
+    rs = ruleset or load_ruleset()
+    excl = set(rs.exclude_processes)
+    env_raw = os.environ.get("TURBO_DESKTOP_EXCLUDE_PROCESSES", "")
+    if env_raw:
+        excl |= _norm_proc_set(env_raw.split(","))
+    if not excl:
+        return False
+    raw = process.strip().lower().removesuffix(".exe")
+    folded = fold_process_name(process)
+    mapped = DISPLAY_PROCESS_ALIASES.get(folded, folded)
+    return bool({raw, folded, mapped} & excl)
 
 
 def _rx(pattern, text) -> bool:

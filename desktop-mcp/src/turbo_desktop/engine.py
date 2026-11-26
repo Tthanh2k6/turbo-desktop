@@ -365,6 +365,33 @@ def no_input() -> bool:
     return os.environ.get("TURBO_DESKTOP_NO_INPUT") == "1"
 
 
+DEFAULT_WINDOW_TIMEOUT = 4.0
+
+
+def window_timeout() -> float:
+    """Per-window UIA timeout in seconds (TURBO_DESKTOP_WINDOW_TIMEOUT, default 4.0s)."""
+    raw = os.environ.get("TURBO_DESKTOP_WINDOW_TIMEOUT")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_WINDOW_TIMEOUT
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_WINDOW_TIMEOUT
+
+
+def normalize_settle_ms(settle_ms: int | float | None) -> int:
+    """Normalise settleMs: 0 (disabled) by default; positive values are clamped to 100..1000 ms."""
+    if settle_ms is None or isinstance(settle_ms, bool):
+        return 0
+    try:
+        ms = int(round(float(settle_ms)))
+    except (TypeError, ValueError):
+        raise ToolError(f"invalid settleMs {settle_ms!r} (expected 0 or 100..1000)")
+    if ms <= 0:
+        return 0
+    return max(100, min(1000, ms))
+
+
 class Win:
     """Per-window state: ref registry and last snapshot (for deltas)."""
 
@@ -437,6 +464,8 @@ class Desktop:
             if not hidden and winsys.is_irrelevant_window(t, own):
                 continue
             name, el = winsys.process_info(t["pid"])
+            if rules_mod.is_excluded_process(name):
+                continue
             w = self._win(t["hwnd"])
             deny = sec.is_denied_window(name, t["title"], t.get("class"))
             secret = sec.secret_reason(t["title"], name)
@@ -505,6 +534,9 @@ class Desktop:
         if sec.stop_requested():
             self.indicator.hide_now()
             raise ToolError(i18n.msg("stop_active_error"), stopped=True)
+        if rules_mod.is_excluded_process(d.get("process")):
+            raise ToolError(f"process '{d.get('process')}' is excluded by exclude_processes config",
+                            excluded=True, process=d.get("process"))
         t = self._pending_invokes.get(d.get("pid")) if uia and action != "close" else None
         if t is not None:
             if t.is_alive():
@@ -592,7 +624,12 @@ class Desktop:
         self._guard_window(d, "inspect")
         w = self._win(d["hwnd"])
         w_title = fold_text(d.get("title") or "")
+        win_limit = window_timeout()
+        walk_deadline = time.monotonic() + win_limit
+        timed_out = False
         root = self._ctrl_for(d)
+        if time.monotonic() >= walk_deadline:
+            timed_out = True
         elements: list[tuple[int, str, object, str, tuple]] = []  # (n, line-without-ref, parent_key, role, anc_keys)
         sigs: dict[int, str] = {}
         all_sigs: dict[int, str] = {}
@@ -611,16 +648,25 @@ class Desktop:
             return ("path", parent_key, c.ControlTypeName, c.Name, c.AutomationId, idx)
 
         def walk(c, depth, parent_key, in_titlebar, anc_keys=()):
-            nonlocal skipped_off, count
-            if c is None:
+            nonlocal skipped_off, count, timed_out
+            if c is None or timed_out:
+                return
+            if time.monotonic() >= walk_deadline:
+                timed_out = True
                 return
             try:
                 kids = c.GetChildren()
             except Exception:
                 return
+            if time.monotonic() >= walk_deadline:
+                timed_out = True
+                return
             idxs: dict = {}
             for ch in kids:
-                if count >= max_nodes:
+                if count >= max_nodes or timed_out:
+                    return
+                if time.monotonic() >= walk_deadline:
+                    timed_out = True
                     return
                 try:
                     role = role_of(ch)
@@ -672,10 +718,18 @@ class Desktop:
                     continue
 
         walk(root, 0, None, False)
+        if timed_out and not seen_keys and not elements:
+            raise ToolError(
+                f"UI Automation on window '{d['title']}' ({d['process']}) timed out after {win_limit:.1f}s",
+                hung=True,
+                timeout=win_limit,
+                window=w.wid,
+                process=d["process"],
+            )
         elapsed_note = ""
         tree_empty = (not seen_keys) or (len(seen_keys) <= 1 and mode != "all")
         ocr_lines = []
-        if tree_empty and ocr is not False and (win32gui.IsWindow(d["hwnd"]) or ocr is True):
+        if tree_empty and not timed_out and ocr is not False and (win32gui.IsWindow(d["hwnd"]) or ocr is True):
             try:
                 ocr_lines = self._ocr_window(w, d)
             except Exception as e:
@@ -713,6 +767,8 @@ class Desktop:
             foot += f", {skipped_off} offscreen hidden"
         if count >= max_nodes:
             foot += ", TRUNCATED (max_nodes)"
+        if timed_out:
+            foot += f", TRUNCATED (window_timeout {win_limit:.1f}s)"
         if tree_empty:
             foot += ", treeEmpty: true"
             if ocr_lines:
@@ -974,10 +1030,74 @@ class Desktop:
             pass
         return None
 
+    def _tree_probe(self, d: dict) -> tuple:
+        """Fast lightweight signature of a window's UIA tree and process dialogs for settle checks."""
+        pid = d.get("pid")
+        if pid and pid in self._pending_invokes and self._pending_invokes[pid].is_alive():
+            return ("pending",)
+        win_sigs = []
+        try:
+            for row in winsys.enum_top_windows(hidden=False):
+                if pid and row.get("pid") == pid:
+                    win_sigs.append((row.get("hwnd"), row.get("title", "")))
+        except Exception:
+            pass
+        node_sigs = []
+        deadline = time.monotonic() + min(0.5, window_timeout())
+        root = self._ctrl_for(d)
+        if root is not None:
+            queue = [root]
+            while queue and len(node_sigs) < 120 and time.monotonic() < deadline:
+                c = queue.pop(0)
+                try:
+                    kids = c.GetChildren()
+                except Exception:
+                    continue
+                for ch in kids:
+                    if len(node_sigs) >= 120 or time.monotonic() >= deadline:
+                        break
+                    try:
+                        role = role_of(ch)
+                        name, aid, value, flags, _ = self._facts(ch, role)
+                        node_sigs.append((role, name, aid, value, tuple(flags)))
+                        queue.append(ch)
+                    except Exception:
+                        continue
+        return (tuple(win_sigs), tuple(node_sigs))
+
+    def _settle_uia(self, d: dict, settle_ms: int) -> int:
+        """Wait until the window's UIA tree stops changing for `settle_ms` (100..1000 ms), up to 2x budget."""
+        ms = normalize_settle_ms(settle_ms)
+        if ms <= 0:
+            return 0
+        target_s = ms / 1000.0
+        max_s = min(2.0, target_s * 2.0)
+        step_s = min(0.05, target_s / 2.0)
+        prev_sig = self._tree_probe(d)
+        quiet_s = 0.0
+        total_s = 0.0
+        while quiet_s + 1e-9 < target_s and total_s + 1e-9 < max_s:
+            if sec.stop_requested():
+                break
+            sleep_dur = min(step_s, max_s - total_s)
+            self.sleep(sleep_dur)
+            total_s += sleep_dur
+            cur_sig = self._tree_probe(d)
+            if cur_sig != prev_sig:
+                prev_sig = cur_sig
+                quiet_s = 0.0
+            else:
+                quiet_s += sleep_dur
+        return int(round(total_s * 1000))
+
     def act(self, window=None, action="click", ref=None, name=None, role=None, text=None, value=None, keys=None,
-            direction=None, amount=1, return_snapshot: bool = False, returnSnapshot: bool | None = None):
+            direction=None, amount=1, return_snapshot: bool = False, returnSnapshot: bool | None = None,
+            settle_ms: int = 0, settleMs: int | None = None):
         if returnSnapshot is not None:
             return_snapshot = bool(returnSnapshot)
+        if settleMs is not None:
+            settle_ms = settleMs
+        eff_settle = normalize_settle_ms(settle_ms)
         self.bridge.check_release()
         self._ind_activity()
         self._note = {}
@@ -1028,6 +1148,8 @@ class Desktop:
             res["approvalId"] = approval
             res["after"] = self._thumb(d, c, "after")
         self.audit.write(event="action", ok=True, via=via, approval_id=approval, **base)
+        if eff_settle > 0 and not res.get("pending"):
+            res["settledMs"] = self._settle_uia(d, eff_settle)
         if return_snapshot and not res.get("pending"):
             try:
                 res["snapshot"] = self.inspect(d["id"], only_changed=True)
@@ -1350,9 +1472,13 @@ class Desktop:
     # ------------------------------------------------------------ other tools
 
     def batch(self, steps: list[dict], window=None, return_snapshot=False,
-              returnSnapshot: bool | None = None) -> dict:
+              returnSnapshot: bool | None = None, settle_ms: int = 0,
+              settleMs: int | None = None) -> dict:
         if returnSnapshot is not None:
             return_snapshot = bool(returnSnapshot)
+        if settleMs is not None:
+            settle_ms = settleMs
+        eff_settle = normalize_settle_ms(settle_ms)
         self.bridge.check_release()
         self._ind_activity()
         results = []
@@ -1376,7 +1502,7 @@ class Desktop:
                         r = self.act(**st)
                     except TypeError as e:   # e.g. an invented field such as "real": say what is valid
                         raise ToolError(f"bad step arguments: {e}. Valid fields: window, ref, name, role, action, text, "
-                                        f"value, keys, direction, amount, returnSnapshot (plus op)")
+                                        f"value, keys, direction, amount, returnSnapshot, settleMs (plus op)")
                     results.append({"i": i, **{k: v for k, v in r.items() if k != "after"}})
                 elif op == "wait_for":
                     results.append({"i": i, **self.wait_for(**st)})
@@ -1398,6 +1524,11 @@ class Desktop:
         else:
             out = {"ok": False, "steps": results, "failedAt": failed}
         snap_win = window or last_win
+        if eff_settle > 0 and failed is None and snap_win:
+            try:
+                out["settledMs"] = self._settle_uia(self.find_window(snap_win), eff_settle)
+            except ToolError:
+                pass
         if return_snapshot and snap_win:
             try:
                 out["snapshot"] = self.inspect(snap_win, only_changed=True)

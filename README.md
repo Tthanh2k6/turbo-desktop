@@ -1,21 +1,29 @@
 # Turbo Desktop
 
-Turbo Desktop lets an AI coding agent operate Windows 10/11 desktop applications through Windows UI Automation (UIA) rather than screenshot loops, while giving the PC owner live supervision, cryptographic per-action approvals, and an emergency kill switch from an Android phone.
+Turbo Desktop lets an AI coding agent operate Windows 10 and Windows 11 applications through Windows UI Automation (UIA) with compact control snapshots and delta diffs. It executes actions in the background through UIA patterns without taking your mouse cursor, blocks secret windows and password fields at the code layer, and lets you supervise or stop runs from your PC or an Android phone.
+
+| Screenshot and mouse-click loop | Where it breaks | `turbo-desktop-mcp` (v0.2.0) |
+| :--- | :--- | :--- |
+| Full `1280x720` PNG capture on every step (`19,664` tokens, `116.4 KB` across 4 tasks) | Burns vision quota, adds seconds of latency per turn, and hits MCP 1 MB payload caps | Compact UIA tree + `onlyChanged=true` delta diffs (`2,313` tokens, `6.5 KB` across the same 4 tasks in [`desktop-mcp/BENCH.md`](desktop-mcp/BENCH.md), `8.5x` fewer tokens and `17.8x` smaller payload) |
+| Moves the physical cursor (`SetCursorPos`) and steals window focus on every click | Any mouse movement or keystroke from you derails the click coordinates | Calls UIA patterns (`Invoke`, `Value`, `SelectionItem`, `Toggle`) in the background (`via: "pattern"`). When real input is required (`via: "input"`), waits for 5 s of user idle, locks physical input, lights an orange monitor frame, and releases on `Esc` x3 |
+| Blind `sleep()` after clicks and raw image coordinates | Reads half-rendered dialogs, misclicks on 125%/150% DPI displays, or hangs for 40 s on a busy Electron/IDE window | Per-monitor DPI awareness, `settleMs` (`100-1000` ms) UIA quiet wait until the tree stops changing, `4.0 s` per-window UIA timeout (`TURBO_DESKTOP_WINDOW_TIMEOUT`), and `[desktop.apps] exclude_processes` |
+| Captures whatever is on screen and clicks any pixel coordinate | Exposes `.env` files and password managers to the model, or clicks Send/Delete/Pay without asking | Hard-floor deny zone blocks `IsPassword` fields, `.env`/`.pem`/`.kdbx` windows, Bitwarden/1Password/KeePassXC, and self-approval prompts. Per-action rules (`easy`/`balanced`/`strict`) prompt locally or on Android via ECDSA P-256 (`Turbo Remote`) |
+| Requires external VLM calls or multi-GB PyTorch/YOLO weights for custom UI | Heavy GPU install or third-party telemetry | Built-in Windows 10/11 `Windows.Media.Ocr` fallback (`treeEmpty: true`, `[w1:o3] @x,y` refs) with zero external weights and zero telemetry |
 
 The repository contains four components that work together or standalone:
 
 | Directory | Component | Description |
 | --- | --- | --- |
-| `desktop-mcp/` | Standalone MCP server (Python 3.12+) | Exposes 9 UIA + Windows OCR tools (`windows_list`, `inspect_compact`, `act`, `batch_actions`, `launch_app`, `wait_for`, `window_control`, `screenshot`, `system_state`). Works on its own in Claude Code, Claude Desktop, Cursor, or any stdio MCP client. Full guide: [`desktop-mcp/README.md`](desktop-mcp/README.md). |
+| `desktop-mcp/` | Standalone MCP server (`v0.2.0`, Python 3.12+) | Exposes 9 UIA + Windows OCR tools (`windows_list`, `inspect_compact`, `act`, `batch_actions`, `launch_app`, `wait_for`, `window_control`, `screenshot`, `system_state`) and a one-command installer (`turbo-desktop-mcp --install`). Works standalone in Claude Desktop, Claude Code, Cursor, Windsurf, or any stdio MCP client. Full guide: [`desktop-mcp/README.md`](desktop-mcp/README.md). |
 | `hub/` | Control hub (Python FastAPI) | Runs on the PC (`127.0.0.1`, LAN, or Tailscale; never `0.0.0.0`), manages headless agent runs (`claude -p --output-format stream-json` or pluggable CLI commands), enforces ECDSA P-256 request/event signing and RFC 6238 TOTP sessions, relays dangerous-action approvals and redacted live screen frames (`/screen.jpg`), and hooks Claude Code's `PermissionRequest` prompt. Full guide (Vietnamese): [`hub/README.md`](hub/README.md). |
 | `android/` | Turbo Remote (`dev.turbodesktop.remote`) | Kotlin + Jetpack Compose Android client (`minSdk 29`). Pairs via local QR code using non-exportable Android Keystore EC P-256 keys (plain + biometric-gated), dispatches tasks, answers approval prompts with cropped control previews, views redacted desktop frames with native-pixel pinch-to-zoom, inspects the audit log, and triggers emergency `STOP`. |
 | `relay/` | Wake-on-LAN relay (Python stdlib) | Lightweight signed HTTP listener for an always-on LAN device (such as a Raspberry Pi or rooted tablet) to send magic packets when the PC is powered off over Ethernet. |
 
 ## How UIA automation saves tokens and avoids focus fights
 
-1. `windows_list` enumerates top-level windows (`w1`, `w2`, ...) while hiding secret windows and flagging elevated processes (`elevated: true, actionable: false`).
-2. `inspect_compact` walks the UIA tree on a dedicated COM thread and formats one line per actionable control (`[w1:e12] <Button> "Save"`), summarizing repeated sibling rows and supporting `onlyChanged: true` diffs (`*` added, `~` changed, `-` removed). Custom-drawn windows with an empty UIA tree automatically fall back to Windows OCR (`treeEmpty: true`, `[w1:oN]` click refs).
-3. `act` and `batch_actions` invoke UIA patterns (`Invoke`, `Value`, `SelectionItem`, `Toggle`, `ExpandCollapse`, `Scroll`) first so the physical mouse cursor and window focus stay untouched (`via: "pattern"`). When an app requires simulated mouse or keyboard input (`via: "input"`), `desktop-mcp` waits until the owner has been idle for 5 seconds, pauses physical input with low-level hooks for that step (or the whole remote task), lights an orange border around every monitor, and restores focus afterwards.
+1. `windows_list` enumerates top-level windows (`w1`, `w2`, ...), skips any process listed in `[desktop.apps] exclude_processes`, hides secret windows, and flags elevated processes (`elevated: true, actionable: false`).
+2. `inspect_compact` walks the UIA tree on a dedicated COM thread with a `4.0 s` per-window timeout (`TURBO_DESKTOP_WINDOW_TIMEOUT`) and formats one line per actionable control (`[w1:e12] <Button> "Save"`), summarizing repeated sibling rows and supporting `onlyChanged: true` diffs (`*` added, `~` changed, `-` removed). Custom-drawn windows with an empty UIA tree automatically fall back to Windows OCR (`treeEmpty: true`, `[w1:oN]` click refs).
+3. `act` and `batch_actions` invoke UIA patterns (`Invoke`, `Value`, `SelectionItem`, `Toggle`, `ExpandCollapse`, `Scroll`) first so the physical mouse cursor and window focus stay untouched (`via: "pattern"`). Pass `settleMs` (`100` to `1000` ms) to wait until the UIA tree stops changing after a click or dialog open before taking a delta snapshot. When an app requires simulated mouse or keyboard input (`via: "input"`), `desktop-mcp` waits until the owner has been idle for 5 seconds, pauses physical input with low-level hooks for that step (or the whole remote task), lights an orange border around every monitor, and restores focus afterwards.
 4. All screen-derived text is wrapped in `<<<SCREEN_CONTENT ...>>>` boundaries so text inside untrusted documents or windows is marked as data.
 
 ## Security floor (active in every preset)
@@ -31,11 +39,21 @@ Turbo Desktop ships three presets (`easy`, `balanced`, `strict`, configured in `
 
 ### 1. Standalone MCP server (`desktop-mcp` only)
 
+Auto-register with Claude Desktop (both `%APPDATA%\Claude\claude_desktop_config.json` and Microsoft Store `%LOCALAPPDATA%\Packages\Claude_*`), Claude Code, Cursor, or Windsurf:
+
+```powershell
+uvx turbo-desktop-mcp --install --client all
+# Preview config paths and JSON without writing files:
+uvx turbo-desktop-mcp --install --client claude-desktop --dry-run
+```
+
+Or install from a local checkout:
+
 ```powershell
 cd desktop-mcp
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .
-claude mcp add turbo-desktop -e PYTHONPATH="$PWD\src" -e PYTHONUTF8=1 -- "$PWD\.venv\Scripts\python.exe" -m turbo_desktop
+.venv\Scripts\turbo-desktop-mcp.exe --install --client claude-desktop
 ```
 
 ### 2. Full remote hub + phone pairing

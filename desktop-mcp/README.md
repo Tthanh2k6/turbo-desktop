@@ -1,12 +1,30 @@
 # turbo-desktop-mcp
 
-An MCP server that lets an AI agent drive Windows desktop apps through UI Automation (UIA) with compact accessibility snapshots and delta diffs. It runs standalone on Windows 10/11 without needing the remote hub or phone app.
+An MCP server that drives Windows 10 and Windows 11 desktop applications through UI Automation (UIA) with compact accessibility trees, `onlyChanged=true` delta diffs, background pattern execution, and built-in WinRT OCR. It runs standalone without the remote hub or phone app.
+
+| Screenshot and mouse-click loop | Where it breaks | `turbo-desktop-mcp` (v0.2.0) |
+| :--- | :--- | :--- |
+| Full `1280x720` PNG capture on every step (`19,664` tokens, `116.4 KB` across 4 tasks) | Burns vision quota, adds seconds of latency per turn, and hits MCP 1 MB payload caps | Compact UIA tree + `onlyChanged=true` delta diffs (`2,313` tokens, `6.5 KB` across the same 4 tasks in [`BENCH.md`](BENCH.md), `8.5x` fewer tokens and `17.8x` smaller payload) |
+| Moves the physical cursor (`SetCursorPos`) and steals window focus on every click | Any mouse movement or keystroke from you derails the click coordinates | Calls UIA patterns (`Invoke`, `Value`, `SelectionItem`, `Toggle`) in the background (`via: "pattern"`). Real input (`via: "input"`) waits for 5 s of user idle, locks physical input, lights an orange monitor frame, and releases on `Esc` x3 |
+| Blind `sleep()` after clicks and raw image coordinates | Reads half-rendered dialogs, misclicks on 125%/150% DPI displays, or hangs for 40 s on a busy Electron/IDE window | Per-monitor DPI awareness, `settleMs` (`100-1000` ms) UIA quiet wait until the tree stops changing, `4.0 s` per-window UIA timeout (`TURBO_DESKTOP_WINDOW_TIMEOUT`), and `[desktop.apps] exclude_processes` |
+| Captures whatever is on screen and clicks any pixel coordinate | Exposes `.env` files and password managers to the model, or clicks Send/Delete/Pay without asking | Hard-floor deny zone blocks `IsPassword` fields, `.env`/`.pem`/`.kdbx` windows, Bitwarden/1Password/KeePassXC, and self-approval prompts. Per-action rules (`easy`/`balanced`/`strict`) prompt before dangerous actions |
+| Requires external VLM calls or multi-GB PyTorch/YOLO weights for custom UI | Heavy GPU install or third-party telemetry | Built-in Windows 10/11 `Windows.Media.Ocr` fallback (`treeEmpty: true`, `[w1:o3] @x,y` refs) with zero external weights and zero telemetry |
 
 Tools: `windows_list`, `inspect_compact`, `act`, `batch_actions`, `launch_app`, `wait_for`, `window_control`, `screenshot`, `system_state`.
 
 ## Install
 
 Requires Windows 10/11 and Python 3.12 or newer.
+
+### One-command MCP client setup (`--install`)
+
+Register `turbo-desktop` automatically in Claude Desktop (standard `%APPDATA%\Claude\claude_desktop_config.json` and Microsoft Store `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json`), Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), or Windsurf (`~/.codeium/windsurf/mcp_config.json`) with atomic writes and `.bak` backups:
+
+```powershell
+uvx turbo-desktop-mcp --install --client all
+# Target a single client or preview with --dry-run:
+uvx turbo-desktop-mcp --install --client claude-desktop --dry-run
+```
 
 ### Quick run with `uvx` or `pipx`
 
@@ -46,7 +64,7 @@ claude mcp add turbo-desktop -e PYTHONPATH=D:\path\to\desktop-mcp\src -e PYTHONU
 
 ### Claude Desktop
 
-Edit `%APPDATA%\Claude\claude_desktop_config.json`:
+Run `uvx turbo-desktop-mcp --install --client claude-desktop` or edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
@@ -69,10 +87,10 @@ All user-facing overlay banners, takeover notices, approval prompts, and error m
 
 ## How the AI uses it
 
-1. `windows_list` lists top-level windows (`w1`, `w2`, ...). `launch_app` starts an app and returns its first compact snapshot.
-2. `inspect_compact(window)` returns one line per control: `[w1:e12] <Button> "Save"`, with values (`= "text"`) and states (`[checked]`, `[disabled]`). Refs stay stable between calls. After the first call, `onlyChanged=true` returns only new (`*`), changed (`~`) and removed (`-`) elements.
-3. `act(ref=..., action=...)`: `click`, `invoke`, `type` (append), `set_value` (replace), `select`, `toggle`, `expand`, `focus`, `read`, `scroll`, `press_keys`, `send_text` (real typing, checked by read-back). The server tries UIA patterns first (`via: "pattern"`). Real mouse and keyboard input (`via: "input"`) acts as a fallback and waits until you stop using the PC.
-4. `batch_actions(steps, returnSnapshot)` runs several steps in one call and stops at the first error.
+1. `windows_list` lists top-level windows (`w1`, `w2`, ...) and skips any process listed in `[desktop.apps] exclude_processes`. `launch_app` starts an app and returns its first compact snapshot.
+2. `inspect_compact(window)` walks the window with a `4.0 s` per-window timeout (`TURBO_DESKTOP_WINDOW_TIMEOUT`) and returns one line per control: `[w1:e12] <Button> "Save"`, with values (`= "text"`) and states (`[checked]`, `[disabled]`). Refs stay stable between calls. After the first call, `onlyChanged=true` returns only new (`*`), changed (`~`) and removed (`-`) elements.
+3. `act(ref=..., action=..., settleMs=0)`: `click`, `invoke`, `type` (append), `set_value` (replace), `select`, `toggle`, `expand`, `focus`, `read`, `scroll`, `press_keys`, `send_text` (real typing, checked by read-back). Pass `settleMs` (`100` to `1000` ms) to wait for the UIA tree to stop changing after a click or dialog open. The server tries UIA patterns first (`via: "pattern"`). Real mouse and keyboard input (`via: "input"`) acts as a fallback and waits until you stop using the PC.
+4. `batch_actions(steps, returnSnapshot, settleMs=0)` runs several steps in one call, optionally waits `settleMs` (`100` to `1000` ms) for the UIA tree to settle before taking the delta snapshot, and stops at the first error.
 5. If a window has no accessible tree (custom-drawn apps, games), `inspect_compact` reports `treeEmpty: true` and returns lines found by Windows OCR, such as `[w1:o3] text "Save" @412,230`. Clicking an OCR ref uses real input.
 6. **Prefer keyboard shortcuts (`Ctrl+S`, `Ctrl+O`) over UIA `Invoke` on WinForms menu items that open modal dialogs:** WinForms runs modal dialog loops (`SaveFileDialog`, `OpenFileDialog`) inside the synchronous UIA `Invoke` handler, which blocks subsequent UIA calls to that process until the dialog closes. Use `act(window=..., action="press_keys", keys="Ctrl+S")` whenever a shortcut exists.
 
@@ -182,7 +200,8 @@ why = "Invoices are saved by me."
 level = "allow"          # or: disabled = true
 
 [desktop.apps]
-allowlist = ["myerp"]     # apps the "unknown app" rules leave alone
+allowlist = ["myerp"]                  # apps the "unknown app" rules leave alone
+exclude_processes = ["Code.exe", "Cursor"]  # skip heavy Electron/IDE windows in windows_list and inspect_compact
 ```
 
 Hub and scripts can call `turbo_desktop.security.classify(window, control, action)`; it returns `{"dangerous", "level", "rule", "reason"}`.

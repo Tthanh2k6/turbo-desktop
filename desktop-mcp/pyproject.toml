@@ -1,6 +1,6 @@
 [project]
 name = "turbo-desktop-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "UIA-based MCP server for driving Windows desktop apps with compact snapshots and delta diffs"
 readme = "README.md"
 license = { text = "MIT" }
