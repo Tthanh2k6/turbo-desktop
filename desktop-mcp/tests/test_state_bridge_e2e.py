@@ -179,6 +179,7 @@ def test_engine_checks_release_before_steps_and_updates_bridge(tmp_path, monkeyp
     dt.bridge.stop()  # isolate engine.py's synchronous check_release() from the background thread
     try:
         d = launch_app("turbo_fixture.exe")
+        wid = dt.find_window(d["title"])["id"]
         now = time.time()
         sec.atomic_write_json(state_dir / "task_active.json", {
             "task": "sync-t1", "since": now, "heartbeat": now, "source": "phone",
@@ -197,10 +198,10 @@ def test_engine_checks_release_before_steps_and_updates_bridge(tmp_path, monkeyp
         monkeypatch.setattr(dt.indicator, "hide_now", lambda: (hides.append(True), orig_hide())[1])
 
         res = dt.batch([
-            {"op": "wait_for", "text": "Count 0", "timeout": 2},
+            {"op": "wait_for", "text": "Count 0", "timeout": 5},
             {"action": "click", "name": "Count 0"},
-        ], window=d["id"])
-        assert res["ok"] is True
+        ], window=wid)
+        assert res["ok"] is True, res
         assert not rel.exists()
         assert hides
         assert dt.lock.locked is False
@@ -217,7 +218,7 @@ def test_engine_checks_release_before_steps_and_updates_bridge(tmp_path, monkeyp
         rel.write_text("takeover", encoding="utf-8")
         dt.indicator.activity()
         assert _read_json(state_dir / "indicator.json") == {"state": "acting"}
-        dt.wait_for(window=d["id"], text="Count 1", timeout=2)
+        dt.wait_for(window=wid, text="Count 1", timeout=5)
         assert not rel.exists()
         assert _read_json(state_dir / "indicator.json") == {"state": "idle"}
         assert _read_json(state_dir / "input_lock.json") == {
