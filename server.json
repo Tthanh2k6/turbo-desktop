@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
-  "name": "io.github.tthanh2k6/turbo-desktop-mcp",
+  "name": "io.github.Tthanh2k6/turbo-desktop-mcp",
   "description": "Windows UIA MCP server for native apps with compact trees, delta diffs, OCR, and safety guards.",
   "version": "0.1.0",
   "repository": {

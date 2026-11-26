@@ -72,3 +72,19 @@ The Save As dialog is the largest result (about 1,500 tokens) because a common f
 - Explorer: create a folder and rename it (task 4, the successful run): 17 tool calls, about 2,290 tokens of tool results, 38 s. The failed first attempts cost 12 calls for nothing; the cause was the key syntax and the missing window-level typing (findings 17 and 18).
 - STOP during a real-input batch: 4 calls, about 145 tokens, 19 s.
 - The input lock itself: lock on to off for one `press_keys` took 0.14 to 0.3 s in the audit log.
+
+## H. Update 26/11/2026: Head-to-head measured benchmark (UIA Deltas vs Screenshot PNGs)
+
+Reproducible script: `desktop-mcp/tests/field/bench_uia_vs_screenshot.py` (Windows 11, `turbo-desktop-mcp v0.1.0`, `TURBO_DESKTOP_NO_INPUT=1`, `TURBO_DESKTOP_APPROVAL=allow`). UIA text tokens are measured with `tiktoken` `o200k_base`; screenshot baselines capture actual PNGs via `Desktop.screenshot()` on the same windows and compute both exact window-crop vision tokens (`W * H / 750`) and standard `1280x720` desktop-capture vision tokens (`1,229` tokens/shot).
+
+| Task | `turbo-desktop-mcp` (UIA + Delta) | Window-crop PNGs (exact dims) | Full `1280x720` PNGs | Token ratio (vs crop / vs 720p) | Payload bytes (UIA vs PNG) | Pass |
+| :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| 1. WinForms form fill (3 fields + Submit + verify) | 760 tok (4 calls) | 1,548 tok (6 shots, 460x420) | 7,374 tok | 2.0x / 9.7x | 2.1 KB vs 55.2 KB | yes |
+| 2. 5-step stateful UI loop (click + delta diff) | 862 tok (12 calls) | 1,548 tok (6 shots, 460x420) | 7,374 tok | 1.8x / 8.6x | 2.5 KB vs 40.5 KB | yes |
+| 3. Native editor multi-line Unicode write + readback | 456 tok (4 calls) | 1,092 tok (3 shots, 620x440) | 3,687 tok | 2.4x / 8.1x | 1.3 KB vs 17.4 KB | yes |
+| 4. Custom-drawn canvas (no UIA tree, WinRT OCR fallback) | 235 tok (2 calls) | 125 tok (1 shot, 360x260) | 1,229 tok | 0.5x / 5.2x | 0.7 KB vs 3.4 KB | yes |
+| **Total (4 tasks)** | **2,313 tok** | **4,313 tok** | **19,664 tok** | **1.9x / 8.5x** | **6.5 KB vs 116.4 KB (17.8x)** | **4/4** |
+
+Notes:
+- On standard WinForms controls (tasks 1 to 3), UIA compact snapshots plus delta diffs use 1.8x to 2.4x fewer tokens than tightly cropped small fixture windows (`460x420` to `620x440`), and 8.1x to 9.7x fewer tokens than `1280x720` full-desktop captures.
+- On Task 4 (`360x260` custom-drawn canvas with an empty UIA tree), a tightly cropped PNG costs fewer tokens (125) than the WinRT OCR text output (235), though OCR returns clickable `@x,y` coordinates without requiring vision input.

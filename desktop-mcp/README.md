@@ -204,3 +204,5 @@ See `BENCH.md` and `FIELD_REPORT.md`. In short:
 - Apps that reopen your previous files on launch (Windows 11 Notepad, Edge, Chrome, VS Code, Word, Excel; list in `[apps.session_restore]`) make those contents visible to the AI: Easy warns, Balanced asks, Strict asks and uses a clean launch for Notepad (new temp file) and VS Code (`--new-window` on a temp folder).
 - **Modal dialogs opened via WinForms menu items:** UIA `Invoke` on a WinForms menu item that opens a modal dialog (such as `File -> Save As...`) returns `pending: true`, and subsequent UI Automation calls into that app block until the modal dialog closes. The tool returns `blocked: true` without waiting so you can close the dialog with `window_control close` or `press_keys {Esc}` on the dialog window. Prefer keyboard shortcuts such as `Ctrl+S` (`act(window=..., action="press_keys", keys="Ctrl+S")`) over UIA `Invoke` for menu items that open modal dialogs.
 - A UIA call into a hung app times out after 40 s (`TURBO_DESKTOP_CALL_TIMEOUT`) and the server carries on with a fresh worker thread.
+
+<!-- mcp-name: io.github.Tthanh2k6/turbo-desktop-mcp -->
