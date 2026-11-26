@@ -25,14 +25,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 WORK_ROOT = Path(tempfile.gettempdir()) / "turbo-field"
 WORK_ROOT.mkdir(parents=True, exist_ok=True)
 
-_PINNED_CLAUDE = Path(
-    r"C:\Users\TRUNG THANH\.vscode\extensions\anthropic.claude-code-2.1.329-win32-x64\resources\native-binary\claude.exe"
+_claude_candidates = sorted(glob.glob(os.path.expanduser(
+    "~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe")))
+CLAUDE = (
+    os.environ.get("CLAUDE_BIN")
+    or shutil.which("claude")
+    or (_claude_candidates[-1] if _claude_candidates else "")
 )
-if _PINNED_CLAUDE.is_file():
-    CLAUDE = str(_PINNED_CLAUDE)
-else:
-    CLAUDE = sorted(glob.glob(os.path.expanduser(
-        "~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe")))[-1]
 
 sys.path.insert(0, str(ROOT / "src"))
 from turbo_desktop import security as sec  # noqa: E402
