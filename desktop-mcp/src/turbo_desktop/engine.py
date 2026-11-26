@@ -453,7 +453,7 @@ class Desktop:
                 d["secret"] = True            # the matched pattern is not shown: it would hint at what the title was
                 d["rule"] = "secret-window"
                 deny = "secret-window"
-            if el:
+            if el and not winsys.we_are_admin():
                 d["elevated"] = True
                 d["actionable"] = False
             if deny:

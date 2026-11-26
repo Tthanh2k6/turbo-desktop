@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def test_state_bridge_e2e_over_stdio(tmp_path):
             "TURBO_DESKTOP_REQUIRE_CLEAN": "1",
             "TURBO_DESKTOP_CONFIG": str(state_dir / "no-such-config.toml"),
         }
-        params = StdioServerParameters(command=str(ROOT / ".venv" / "Scripts" / "python.exe"),
+        params = StdioServerParameters(command=sys.executable,
                                        args=["-m", "turbo_desktop"], env=env)
         async with stdio_client(params) as (r, w):
             async with ClientSession(r, w) as session:

@@ -166,7 +166,11 @@ def test_system_state_and_elevation_helpers():
         assert k in st
     assert st["idleSeconds"] >= 0
     name, el = winsys.process_info(os.getpid())
-    assert name.lower().startswith("python") and el in (False, None)
+    assert name.lower().startswith("python")
+    if winsys.we_are_admin():
+        assert el in (True, None)
+    else:
+        assert el in (False, None)
     # System (pid 4) cannot be opened from a normal user process: reported as not actionable
     if not winsys.we_are_admin():
         assert winsys.is_elevated_above_us(4) is True
