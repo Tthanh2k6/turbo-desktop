@@ -344,7 +344,7 @@ def test_blackout_password_fields_helper_and_ocr_thumb_redaction_and_server_guar
     saved = Image.open(thumb_path)
     assert saved.getpixel((25, 25)) == (0, 0, 0)
 
-    # 3. server.screenshot wraps in _guard and has no added parameters
-    assert list(inspect.signature(server.screenshot).parameters) == ["window"]
+    # 3. server.screenshot wraps in _guard and exposes (window, region, maxWidth)
+    assert list(inspect.signature(server.screenshot).parameters) == ["window", "region", "maxWidth"]
     err_json = json.loads(server.screenshot("no_such_window_xyz"))
     assert err_json["ok"] is False and "no window matches" in err_json["error"]

@@ -114,10 +114,13 @@ def windows_list(verbose: bool = False, hidden: bool = False) -> str:
 
 @mcp.tool()
 def inspect_compact(window: str, mode: str = "interactive", query: str | None = None, onlyChanged: bool = False,
-                    maxChars: int = 6000) -> str:
+                    maxChars: int = 6000, ocrRegion: list[int] | None = None) -> str:
     """Use query= on large windows, and onlyChanged=true after the first snapshot (launch_app and returnSnapshot already
     return snapshots). Lines: `[w1:e12] <Button> "Save"`; mode: interactive | text | all; OCR fallback `[w1:o3]`."""
-    return _guard(lambda: desk().inspect(window, mode, query, onlyChanged, maxChars), per_window=True)
+    return _guard(
+        lambda: desk().inspect(window, mode, query, onlyChanged, maxChars, ocr_region=ocrRegion),
+        per_window=True,
+    )
 
 
 @mcp.tool()
@@ -164,9 +167,9 @@ def window_control(window: str, action: str) -> str:
 
 
 @mcp.tool()
-def screenshot(window: str) -> Image:
+def screenshot(window: str, region: list[int] | None = None, maxWidth: int = 1280) -> Image:
     """Last resort when the UIA tree is empty: PNG of one window (password fields blacked out)."""
-    return _guard(lambda: Image(data=desk().screenshot(window), format="png"))
+    return _guard(lambda: Image(data=desk().screenshot(window, region=region, max_width=maxWidth), format="png"))
 
 
 @mcp.tool()

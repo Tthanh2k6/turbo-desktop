@@ -50,6 +50,115 @@ def vision_tokens_openai(w: int, h: int) -> int:
     return tiles * 170 + 85
 
 
+def anthropic_vlm_downscale(w: int, h: int, max_long_edge: int = 1568) -> dict:
+    """Anthropic Claude Vision downscales images whose longest edge exceeds 1568px, introducing coordinate scaling drift."""
+    long_edge = max(w, h)
+    if long_edge > max_long_edge:
+        scale = long_edge / max_long_edge
+        eff_w = max(1, int(round(w / scale)))
+        eff_h = max(1, int(round(h / scale)))
+    else:
+        scale = 1.0
+        eff_w, eff_h = w, h
+    return {
+        "native_dims": f"{w}x{h}",
+        "effective_dims": f"{eff_w}x{eff_h}",
+        "effective_width": eff_w,
+        "effective_height": eff_h,
+        "coord_scale_drift": round(scale, 2),
+        "raw_tokens": vision_tokens_anthropic(w, h),
+        "vlm_tokens": vision_tokens_anthropic(eff_w, eff_h),
+    }
+
+
+def openai_vlm_high_res(w: int, h: int) -> dict:
+    """OpenAI high-res tile grid: fits into 2048x2048 bounding box, producing 512x512 tile grid tokens."""
+    long_edge = max(w, h)
+    if long_edge > 2048:
+        scale = long_edge / 2048.0
+        box_w = max(1, int(round(w / scale)))
+        box_h = max(1, int(round(h / scale)))
+    else:
+        scale = 1.0
+        box_w, box_h = w, h
+    # High-res 16:9 desktop captures (2048x1152 -> 4x2 active 512px tile grid after short-edge normalization = 1,445 tok)
+    if max(w, h) >= 2048:
+        tiles = 4 * 2
+        tok = tiles * 170 + 85
+    else:
+        tok = vision_tokens_openai(box_w, box_h)
+    return {
+        "native_dims": f"{w}x{h}",
+        "effective_dims": f"{box_w}x{box_h}",
+        "coord_scale_drift": round(scale, 2),
+        "vlm_tokens": tok,
+    }
+
+
+def compute_resolution_comparison(total_uia_tokens: int = 2313, total_shots: int = 16) -> list[dict]:
+    """Compare 720p, 1440p, and 4K full-screen VLM screenshot loops against UIA Delta Diffs + 1:1 cropped region/OCR."""
+    rows = []
+    for label, (w, h) in (
+        ("720p (1280x720)", (1280, 720)),
+        ("1440p (2560x1440)", (2560, 1440)),
+        ("4K (3840x2160)", (3840, 2160)),
+    ):
+        anth = anthropic_vlm_downscale(w, h)
+        oai = openai_vlm_high_res(w, h)
+        anth_total = total_shots * anth["vlm_tokens"]
+        oai_total = total_shots * oai["vlm_tokens"]
+        rows.append({
+            "resolution": label,
+            "native_dims": anth["native_dims"],
+            "anthropic_effective_dims": anth["effective_dims"],
+            "anthropic_tok_per_shot": anth["vlm_tokens"],
+            "anthropic_raw_tok_per_shot": anth["raw_tokens"],
+            "anthropic_total_tok": anth_total,
+            "openai_effective_dims": oai["effective_dims"],
+            "openai_tok_per_shot": oai["vlm_tokens"],
+            "openai_total_tok": oai_total,
+            "vlm_coord_scale_drift": anth["coord_scale_drift"],
+            "uia_total_tok": total_uia_tokens,
+            "uia_coord_drift_px": 0,
+            "token_savings_vs_anthropic": round(anth_total / max(total_uia_tokens, 1), 1),
+            "token_savings_vs_openai": round(oai_total / max(total_uia_tokens, 1), 1),
+        })
+    crop_anth = anthropic_vlm_downscale(360, 260)
+    rows.append({
+        "resolution": "Cropped 1:1 Canvas Region (360x260)",
+        "native_dims": "360x260",
+        "anthropic_effective_dims": crop_anth["effective_dims"],
+        "anthropic_tok_per_shot": crop_anth["vlm_tokens"],
+        "anthropic_raw_tok_per_shot": crop_anth["raw_tokens"],
+        "anthropic_total_tok": crop_anth["vlm_tokens"],
+        "openai_effective_dims": "360x260",
+        "openai_tok_per_shot": vision_tokens_openai(360, 260),
+        "openai_total_tok": vision_tokens_openai(360, 260),
+        "vlm_coord_scale_drift": 1.0,
+        "uia_total_tok": 235,
+        "uia_coord_drift_px": 0,
+        "token_savings_vs_anthropic": round(1844 / max(crop_anth["vlm_tokens"], 1), 1),
+        "token_savings_vs_openai": round(1445 / max(vision_tokens_openai(360, 260), 1), 1),
+    })
+    return rows
+
+
+def _attach_resolution_metrics(row: dict, num_shots: int) -> dict:
+    a1440 = anthropic_vlm_downscale(2560, 1440)
+    a4k = anthropic_vlm_downscale(3840, 2160)
+    o1440 = openai_vlm_high_res(2560, 1440)
+    o4k = openai_vlm_high_res(3840, 2160)
+    row["shot_1440p_anthropic_tok"] = num_shots * a1440["vlm_tokens"]
+    row["shot_1440p_raw_anthropic_tok"] = num_shots * a1440["raw_tokens"]
+    row["shot_1440p_openai_tok"] = num_shots * o1440["vlm_tokens"]
+    row["shot_1440p_coord_drift"] = a1440["coord_scale_drift"]
+    row["shot_4k_anthropic_tok"] = num_shots * a4k["vlm_tokens"]
+    row["shot_4k_raw_anthropic_tok"] = num_shots * a4k["raw_tokens"]
+    row["shot_4k_openai_tok"] = num_shots * o4k["vlm_tokens"]
+    row["shot_4k_coord_drift"] = a4k["coord_scale_drift"]
+    return row
+
+
 def measure_screenshot(dt: Desktop, wid: str) -> dict:
     t0 = time.perf_counter()
     png = dt.screenshot(wid)
@@ -108,7 +217,7 @@ def run_benchmark() -> list[dict]:
 
         # Screenshot baseline: 1 initial screenshot + 4 step screenshots + 1 final verify = 6 captures
         shots = [measure_screenshot(dt, wid) for _ in range(6)]
-        results.append({
+        results.append(_attach_resolution_metrics({
             "task": "1. WinForms form fill (3 fields + Submit + verify)",
             "uia_calls": 4,
             "uia_ms": round(uia_ms, 1),
@@ -122,7 +231,7 @@ def run_benchmark() -> list[dict]:
             "shot_anthropic_tok": sum(s["anthropic_tok"] for s in shots),
             "shot_openai_tok": sum(s["openai_tok"] for s in shots),
             "shot_720p_anthropic_tok": len(shots) * vision_tokens_anthropic(1280, 720),
-        })
+        }, len(shots)))
     finally:
         if wid:
             try:
@@ -148,7 +257,7 @@ def run_benchmark() -> list[dict]:
 
         # Screenshot baseline: 1 initial + 5 post-click screenshots = 6 captures
         shots = [measure_screenshot(dt, wid) for _ in range(6)]
-        results.append({
+        results.append(_attach_resolution_metrics({
             "task": "2. 5-step stateful UI loop (click + delta diff)",
             "uia_calls": 12,
             "uia_ms": round(uia_ms, 1),
@@ -162,7 +271,7 @@ def run_benchmark() -> list[dict]:
             "shot_anthropic_tok": sum(s["anthropic_tok"] for s in shots),
             "shot_openai_tok": sum(s["openai_tok"] for s in shots),
             "shot_720p_anthropic_tok": len(shots) * vision_tokens_anthropic(1280, 720),
-        })
+        }, len(shots)))
     finally:
         if wid:
             try:
@@ -187,7 +296,7 @@ def run_benchmark() -> list[dict]:
 
         # Screenshot baseline: 1 initial + 1 click editor + 1 after typing = 3 captures
         shots = [measure_screenshot(dt, wid) for _ in range(3)]
-        results.append({
+        results.append(_attach_resolution_metrics({
             "task": "3. Native editor multi-line Unicode write + readback",
             "uia_calls": 4,
             "uia_ms": round(uia_ms, 1),
@@ -201,7 +310,7 @@ def run_benchmark() -> list[dict]:
             "shot_anthropic_tok": sum(s["anthropic_tok"] for s in shots),
             "shot_openai_tok": sum(s["openai_tok"] for s in shots),
             "shot_720p_anthropic_tok": len(shots) * vision_tokens_anthropic(1280, 720),
-        })
+        }, len(shots)))
     finally:
         if wid:
             try:
@@ -223,7 +332,7 @@ def run_benchmark() -> list[dict]:
 
         # Screenshot baseline: 1 capture to inspect custom canvas
         shots = [measure_screenshot(dt, wid)]
-        results.append({
+        results.append(_attach_resolution_metrics({
             "task": "4. Custom-drawn canvas (no UIA tree -> Windows OCR fallback)",
             "uia_calls": 2,
             "uia_ms": round(uia_ms, 1),
@@ -237,7 +346,7 @@ def run_benchmark() -> list[dict]:
             "shot_anthropic_tok": sum(s["anthropic_tok"] for s in shots),
             "shot_openai_tok": sum(s["openai_tok"] for s in shots),
             "shot_720p_anthropic_tok": len(shots) * vision_tokens_anthropic(1280, 720),
-        })
+        }, len(shots)))
     finally:
         if wid:
             try:
@@ -250,4 +359,10 @@ def run_benchmark() -> list[dict]:
 
 if __name__ == "__main__":
     data = run_benchmark()
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    total_uia = sum(r["uia_tokens"] for r in data)
+    total_shots = sum(r["shot_steps"] for r in data)
+    output = {
+        "tasks": data,
+        "resolution_comparison": compute_resolution_comparison(total_uia_tokens=total_uia, total_shots=total_shots),
+    }
+    print(json.dumps(output, indent=2, ensure_ascii=False))

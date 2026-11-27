@@ -392,6 +392,53 @@ def normalize_settle_ms(settle_ms: int | float | None) -> int:
     return max(100, min(1000, ms))
 
 
+def _parse_region_spec(region, param_name: str = "region") -> tuple[int, int, int, int] | None:
+    """Validate `[x, y, w, h]` region spec (relative to window origin). Raises ToolError on invalid format or w/h <= 0."""
+    if region is None:
+        return None
+    if not isinstance(region, (list, tuple)) or len(region) != 4:
+        raise ToolError(f"invalid {param_name} {region!r} (expected [x, y, w, h])")
+    vals: list[int] = []
+    for v in region:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ToolError(f"invalid {param_name} {region!r} (expected 4 numbers [x, y, w, h])")
+        vals.append(int(round(float(v))))
+    x, y, w, h = vals
+    if w <= 0 or h <= 0:
+        raise ToolError(f"invalid {param_name} {region!r}: width and height must be > 0")
+    return x, y, w, h
+
+
+def _crop_region(img, region, param_name: str = "region"):
+    """Crop `img` to `region=[x, y, w, h]` clamped to image bounds; return `(cropped_img, x1, y1)`."""
+    parsed = _parse_region_spec(region, param_name)
+    if parsed is None:
+        return img, 0, 0
+    x, y, w, h = parsed
+    img_w, img_h = int(img.width), int(img.height)
+    x1 = max(0, min(x, img_w))
+    y1 = max(0, min(y, img_h))
+    x2 = max(0, min(x + w, img_w))
+    y2 = max(0, min(y + h, img_h))
+    if x2 <= x1 or y2 <= y1:
+        raise ToolError(
+            f"invalid {param_name} {list(parsed)!r}: region lies outside window bounds ({img_w}x{img_h})"
+        )
+    return img.crop((x1, y1, x2, y2)), x1, y1
+
+
+def _normalize_max_width(max_width: int | float | None) -> int:
+    """Validate screenshot `maxWidth` (default 1280, must be > 0)."""
+    if max_width is None:
+        return 1280
+    if isinstance(max_width, bool) or not isinstance(max_width, (int, float)):
+        raise ToolError(f"invalid maxWidth {max_width!r}: must be a positive integer")
+    mw = int(round(float(max_width)))
+    if mw <= 0:
+        raise ToolError(f"invalid maxWidth {max_width!r}: must be > 0")
+    return mw
+
+
 class Win:
     """Per-window state: ref registry and last snapshot (for deltas)."""
 
@@ -615,11 +662,16 @@ class Desktop:
         return name, aid, value, flags, pw
 
     def inspect(self, window, mode="interactive", query=None, only_changed=False, max_chars=6000,
-                max_nodes=700, ocr=None, onlyChanged: bool | None = None, maxChars: int | None = None) -> str:
+                max_nodes=700, ocr=None, onlyChanged: bool | None = None, maxChars: int | None = None,
+                ocr_region: list[int] | tuple[int, ...] | None = None,
+                ocrRegion: list[int] | tuple[int, ...] | None = None) -> str:
         if onlyChanged is not None:
             only_changed = bool(onlyChanged)
         if maxChars is not None:
             max_chars = int(maxChars)
+        if ocrRegion is not None:
+            ocr_region = ocrRegion
+        parsed_ocr_region = _parse_region_spec(ocr_region, "ocrRegion")
         d = self.find_window(window)
         self._guard_window(d, "inspect")
         w = self._win(d["hwnd"])
@@ -729,9 +781,12 @@ class Desktop:
         elapsed_note = ""
         tree_empty = (not seen_keys) or (len(seen_keys) <= 1 and mode != "all")
         ocr_lines = []
-        if tree_empty and not timed_out and ocr is not False and (win32gui.IsWindow(d["hwnd"]) or ocr is True):
+        want_ocr = (tree_empty or ocr is True or parsed_ocr_region is not None) and not timed_out and ocr is not False
+        if want_ocr and (win32gui.IsWindow(d["hwnd"]) or ocr is True or parsed_ocr_region is not None):
             try:
-                ocr_lines = self._ocr_window(w, d)
+                ocr_lines = self._ocr_window(w, d, ocr_region=parsed_ocr_region)
+            except ToolError:
+                raise
             except Exception as e:
                 elapsed_note = f" ocr-unavailable: {_clip(str(e), 80)}"
 
@@ -773,6 +828,8 @@ class Desktop:
             foot += ", treeEmpty: true"
             if ocr_lines:
                 foot += ', via: "ocr"'
+        elif ocr_lines:
+            foot += ', via: "ocr"'
         for ol in ocr_lines:
             lines.append(ol)
         body = "\n".join(lines)
@@ -791,9 +848,13 @@ class Desktop:
                         body += "\n" + sl
         return sec.wrap_untrusted(f"{head}\n{body}\n{foot}{elapsed_note}", label=w.wid + " ")
 
-    def _ocr_window(self, w: Win, d: dict) -> list[str]:
+    def _ocr_window(self, w: Win, d: dict, ocr_region=None) -> list[str]:
         img, (ox, oy) = winsys.capture_window(d["hwnd"])
         self._blackout_passwords(img, d, ox, oy)
+        if ocr_region is not None:
+            img, rx, ry = _crop_region(img, ocr_region, "ocrRegion")
+            ox += rx
+            oy += ry
         res = winsys.ocr_image(img)
         w.ocr.clear()
         w.ocr_next = 1
@@ -1848,16 +1909,19 @@ class Desktop:
             pass
         return img
 
-    def screenshot(self, window, region=None):
+    def screenshot(self, window, region=None, max_width: int = 1280, maxWidth: int | None = None):
+        if maxWidth is not None:
+            max_width = maxWidth
+        mw = _normalize_max_width(max_width)
+        parsed_region = _parse_region_spec(region, "region")
         d = self.find_window(window)
         self._guard_window(d, "inspect")
         img, (ox, oy) = winsys.capture_window(d["hwnd"])
         self._blackout_passwords(img, d, ox, oy)
-        if region:
-            x, y, w_, h_ = region
-            img = img.crop((x, y, x + w_, y + h_))
-        if img.width > 1280:
-            img = img.resize((1280, int(img.height * 1280 / img.width)))
+        if parsed_region is not None:
+            img, _, _ = _crop_region(img, parsed_region, "region")
+        if img.width > mw:
+            img = img.resize((mw, max(1, int(img.height * mw / img.width))))
         import io
         buf = io.BytesIO()
         img.save(buf, "PNG")

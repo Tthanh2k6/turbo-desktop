@@ -289,3 +289,141 @@ def test_version_020_consistency():
     srv_json = json.loads((repo_root / "server.json").read_text(encoding="utf-8"))
     assert srv_json["version"] == "0.2.0"
     assert srv_json["packages"][0]["version"] == "0.2.0"
+
+
+# ---------------------------------------------------------------- 5. Cropped screenshot (region, maxWidth), ocrRegion & 1440p/4K benchmark
+
+def test_mcp_tool_signatures_include_region_max_width_and_ocr_region():
+    shot_params = inspect.signature(server.screenshot).parameters
+    assert "region" in shot_params and shot_params["region"].default is None
+    assert "maxWidth" in shot_params and shot_params["maxWidth"].default == 1280
+
+    insp_params = inspect.signature(server.inspect_compact).parameters
+    assert "ocrRegion" in insp_params and insp_params["ocrRegion"].default is None
+
+
+def test_screenshot_region_crop_and_max_width_downscaling(tmp_path, monkeypatch):
+    import io
+    from PIL import Image
+
+    dt = Desktop(audit=sec.AuditLog(tmp_path / "audit.jsonl"))
+    fake_win = {"id": "w1", "hwnd": 4242, "title": "HiDpiCanvas", "process": "canvasapp", "pid": 424}
+    monkeypatch.setattr(dt, "find_window", lambda spec: fake_win)
+    monkeypatch.setattr(dt, "_guard_window", lambda d, act, uia=True: None)
+    monkeypatch.setattr(dt, "_blackout_passwords", lambda img, d=None, ox=0, oy=0, rects=None: img)
+
+    # Simulate a 2560x1440 (1440p) window capture
+    monkeypatch.setattr(winsys, "capture_window", lambda hwnd: (Image.new("RGB", (2560, 1440), (30, 60, 90)), (100, 50)))
+
+    # 1. Default maxWidth=1280 downscales full 2560x1440 window to 1280x720
+    png_default = dt.screenshot("w1")
+    img_default = Image.open(io.BytesIO(png_default))
+    assert img_default.size == (1280, 720)
+
+    # 2. Custom maxWidth=1920 downscales 2560x1440 to 1920x1080; maxWidth=3840 preserves full 1:1 2560x1440
+    img_1920 = Image.open(io.BytesIO(dt.screenshot("w1", maxWidth=1920)))
+    assert img_1920.size == (1920, 1080)
+    img_native = Image.open(io.BytesIO(dt.screenshot("w1", max_width=3840)))
+    assert img_native.size == (2560, 1440)
+
+    # 3. 1:1 region crop [200, 150, 360, 260] stays exact 360x260 without downscaling
+    img_crop = Image.open(io.BytesIO(dt.screenshot("w1", region=[200, 150, 360, 260])))
+    assert img_crop.size == (360, 260)
+
+    # 4. Region crop wider than maxWidth is downscaled proportionally
+    img_crop_scaled = Image.open(io.BytesIO(dt.screenshot("w1", region=[0, 0, 1600, 800], maxWidth=800)))
+    assert img_crop_scaled.size == (800, 400)
+
+    # 5. Partially overflowing region clamps cleanly to window bounds (2560 - 2400 = 160, 1440 - 1300 = 140)
+    img_clamped = Image.open(io.BytesIO(dt.screenshot("w1", region=[2400, 1300, 500, 500])))
+    assert img_clamped.size == (160, 140)
+    img_neg_clamped = Image.open(io.BytesIO(dt.screenshot("w1", region=[-40, -20, 140, 120])))
+    assert img_neg_clamped.size == (100, 100)
+
+
+def test_screenshot_and_ocr_region_invalid_bounds_raise_tool_error(tmp_path, monkeypatch):
+    from PIL import Image
+
+    dt = Desktop(audit=sec.AuditLog(tmp_path / "audit.jsonl"))
+    fake_win = {"id": "w1", "hwnd": 4242, "title": "HiDpiCanvas", "process": "canvasapp", "pid": 424}
+    monkeypatch.setattr(dt, "find_window", lambda spec: fake_win)
+    monkeypatch.setattr(dt, "_guard_window", lambda d, act, uia=True: None)
+    monkeypatch.setattr(dt, "_blackout_passwords", lambda img, d=None, ox=0, oy=0, rects=None: img)
+    monkeypatch.setattr(dt, "_ctrl_for", lambda d: None)
+    monkeypatch.setattr(winsys, "capture_window", lambda hwnd: (Image.new("RGB", (600, 400)), (0, 0)))
+
+    # Invalid region dimensions (w <= 0 or h <= 0) or malformed lists
+    for bad_region in ([0, 0, 0, 100], [10, 10, 100, 0], [0, 0, -50, 100], [0, 0, 100, -10], [1, 2, 3], "bad", [True, 0, 10, 10]):
+        with pytest.raises(ToolError, match="invalid region"):
+            dt.screenshot("w1", region=bad_region)
+        with pytest.raises(ToolError, match="invalid ocrRegion"):
+            dt.inspect("w1", ocrRegion=bad_region)
+
+    # Region completely outside window bounds (600x400)
+    for out_of_bounds in ([700, 100, 50, 50], [100, 500, 50, 50], [-100, 0, 50, 50], [0, -100, 50, 50]):
+        with pytest.raises(ToolError, match="outside window bounds"):
+            dt.screenshot("w1", region=out_of_bounds)
+        with pytest.raises(ToolError, match="outside window bounds"):
+            dt.inspect("w1", ocrRegion=out_of_bounds)
+
+    # Invalid maxWidth (<= 0 or non-numeric/bool)
+    for bad_mw in (0, -1280, "wide", False):
+        with pytest.raises(ToolError, match="invalid maxWidth"):
+            dt.screenshot("w1", maxWidth=bad_mw)
+
+
+def test_inspect_ocr_region_crops_and_offsets_screen_coordinates(tmp_path, monkeypatch):
+    from PIL import Image
+
+    dt = Desktop(audit=sec.AuditLog(tmp_path / "audit.jsonl"))
+    fake_win = {"id": "w1", "hwnd": 7777, "title": "Canvas4K", "process": "canvas4k", "pid": 777}
+    monkeypatch.setattr(dt, "find_window", lambda spec: fake_win)
+    monkeypatch.setattr(dt, "_guard_window", lambda d, act, uia=True: None)
+    monkeypatch.setattr(dt, "_blackout_passwords", lambda img, d=None, ox=0, oy=0, rects=None: img)
+    monkeypatch.setattr(dt, "_ctrl_for", lambda d: None)
+
+    captured_sizes: list[tuple[int, int]] = []
+    # Window is at screen origin (100, 200) with size 2560x1440
+    monkeypatch.setattr(winsys, "capture_window", lambda hwnd: (Image.new("RGB", (2560, 1440)), (100, 200)))
+
+    def fake_ocr(img):
+        captured_sizes.append(img.size)
+        return [{"text": "Canvas Save", "x": 10, "y": 20, "w": 80, "h": 30}]
+
+    monkeypatch.setattr(winsys, "ocr_image", fake_ocr)
+
+    snap = dt.inspect("w1", ocrRegion=[300, 400, 360, 260])
+    assert captured_sizes == [(360, 260)]
+    # Screen center x = 100 (win ox) + 300 (region x) + 10 + 80//2 = 450
+    # Screen center y = 200 (win oy) + 400 (region y) + 20 + 30//2 = 635
+    assert '[w1:o1] text "Canvas Save" @450,635' in snap
+    assert 'via: "ocr"' in snap
+    w_obj = dt._win(7777)
+    assert w_obj.ocr[1] == (450, 635, "Canvas Save")
+
+
+def test_1440p_and_4k_benchmark_resolution_comparison():
+    from field import bench_uia_vs_screenshot as bench
+
+    a1440 = bench.anthropic_vlm_downscale(2560, 1440)
+    assert a1440["effective_dims"] == "1568x882"
+    assert a1440["vlm_tokens"] == 1844
+    assert a1440["raw_tokens"] == 4916
+    assert a1440["coord_scale_drift"] == 1.63
+
+    a4k = bench.anthropic_vlm_downscale(3840, 2160)
+    assert a4k["effective_dims"] == "1568x882"
+    assert a4k["vlm_tokens"] == 1844
+    assert a4k["raw_tokens"] == 11060
+    assert a4k["coord_scale_drift"] == 2.45
+
+    table = bench.compute_resolution_comparison(total_uia_tokens=2313, total_shots=16)
+    by_res = {r["resolution"]: r for r in table}
+    assert by_res["1440p (2560x1440)"]["anthropic_total_tok"] == 29504
+    assert by_res["1440p (2560x1440)"]["token_savings_vs_anthropic"] == 12.8
+    assert by_res["4K (3840x2160)"]["anthropic_total_tok"] == 29504
+    assert by_res["4K (3840x2160)"]["vlm_coord_scale_drift"] == 2.45
+    assert by_res["4K (3840x2160)"]["uia_coord_drift_px"] == 0
+    assert by_res["Cropped 1:1 Canvas Region (360x260)"]["vlm_coord_scale_drift"] == 1.0
+    assert by_res["Cropped 1:1 Canvas Region (360x260)"]["anthropic_tok_per_shot"] == 125
+

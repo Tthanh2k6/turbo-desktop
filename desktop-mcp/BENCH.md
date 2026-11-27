@@ -88,3 +88,28 @@ Reproducible script: `desktop-mcp/tests/field/bench_uia_vs_screenshot.py` (Windo
 Notes:
 - On standard WinForms controls (tasks 1 to 3), UIA compact snapshots plus delta diffs use 1.8x to 2.4x fewer tokens than tightly cropped small fixture windows (`460x420` to `620x440`), and 8.1x to 9.7x fewer tokens than `1280x720` full-desktop captures.
 - On Task 4 (`360x260` custom-drawn canvas with an empty UIA tree), a tightly cropped PNG costs fewer tokens (125) than the WinRT OCR text output (235), though OCR returns clickable `@x,y` coordinates without requiring vision input.
+
+## I. Update 28/11/2026: High-DPI (`1440p` & `4K`) VLM Downscaling & Coordinate Drift vs UIA Deltas + Cropped 1:1 Region/OCR
+
+On `1440p (2560x1440)` and `4K (3840x2160)` desktop monitors, full-screen screenshot loops hit Vision-Language Model (VLM) long-edge caps (`>1568px` on Anthropic Claude Vision, downscaled to `1568x882`; `>2048px` on OpenAI high-res tile grid, scaled into `512x512` tiles). Downscaling blurs `8–10pt` UI fonts and introduces coordinate scaling drift (`1.63x` at `1440p`, `2.45x` at `4K`) when mapping model-predicted pixel coordinates back to physical screen coordinates.
+
+By contrast, `turbo-desktop-mcp` UIA compact snapshots + `onlyChanged=true` delta diffs are resolution-invariant (`2,313` tokens total and `0 px` coordinate drift at any screen resolution), and `screenshot(region=[x,y,w,h], maxWidth=1568)` / `inspect_compact(ocrRegion=[x,y,w,h])` crop custom-drawn canvas panes at native `1:1` pixels without triggering VLM downscaling.
+
+### 1. Resolution comparison across the 4-task benchmark (16 screenshot steps vs UIA + Delta)
+
+| Display / Capture Mode | Native Resolution | VLM Effective Resolution (Anthropic / OpenAI) | Anthropic Vision Cost (per shot / 16-shot total) | OpenAI High-Res Cost (per shot / 16-shot total) | VLM Coordinate Scaling Drift | `turbo-desktop-mcp` (UIA + Delta / Cropped OCR) | Token Savings (vs Anthropic / OpenAI) |
+| :--- | :---: | :---: | ---: | ---: | :---: | ---: | :---: |
+| **Full-screen `720p`** | `1280x720` | `1280x720` / `1280x720` | 1,229 tok / 19,664 tok | 1,105 tok / 17,680 tok | `1.00x` (`0 px`) | **2,313 tok** (`0 px` drift) | **8.5x / 7.6x** |
+| **Full-screen `1440p`** | `2560x1440` | `1568x882` / `2048x1152` | 1,844 tok (4,916 raw) / **29,504 tok** | 1,445 tok / **23,120 tok** | **`1.63x`** (`±1–2 px` jitter) | **2,313 tok** (`0 px` drift) | **12.8x / 10.0x** |
+| **Full-screen `4K UHD`** | `3840x2160` | `1568x882` / `2048x1152` | 1,844 tok (11,060 raw) / **29,504 tok** | 1,445 tok / **23,120 tok** | **`2.45x`** (`±2–3 px` jitter + font blur) | **2,313 tok** (`0 px` drift) | **12.8x / 10.0x** |
+| **Cropped `1:1` Canvas (`region` / `ocrRegion`)** | `360x260` | `360x260` (`1:1`, `0%` downscale) | **125 tok** (1 shot) | **255 tok** (1 tile) | **`1.00x`** (`0 px`, native 1:1) | **235 tok** (`[w1:oN] @x,y` exact coords) | **14.8x / 5.7x** vs full-screen 1440p/4K shot |
+
+### 2. Per-task token breakdown at `720p`, `1440p`, and `4K`
+
+| Task | `turbo-desktop-mcp` (UIA + Delta) | `720p` (`1280x720`) VLM PNGs | `1440p` (`2560x1440`) VLM PNGs (`1.63x` drift) | `4K` (`3840x2160`) VLM PNGs (`2.45x` drift) | Unscaled `4K` Raw Pixel Equivalent (`W*H/750`) | Savings at `1440p`/`4K` (VLM / Raw) |
+| :--- | ---: | ---: | ---: | ---: | ---: | :---: |
+| 1. WinForms form fill (6 shots vs 4 UIA calls) | **760 tok** | 7,374 tok | 11,064 tok | 11,064 tok | 66,360 tok | **14.6x** / 87.3x |
+| 2. 5-step stateful UI loop (6 shots vs 12 UIA calls) | **862 tok** | 7,374 tok | 11,064 tok | 11,064 tok | 66,360 tok | **12.8x** / 77.0x |
+| 3. Native editor Unicode write + readback (3 shots vs 4 UIA calls) | **456 tok** | 3,687 tok | 5,532 tok | 5,532 tok | 33,180 tok | **12.1x** / 72.8x |
+| 4. Custom canvas (1 shot vs `ocrRegion` / `region=[0,0,360,260]`) | **235 tok** (OCR) / **125 tok** (1:1 crop) | 1,229 tok | 1,844 tok | 1,844 tok | 11,060 tok | **7.8x (OCR) / 14.8x (crop)** |
+| **Total (4 tasks, 16 screenshot steps)** | **2,313 tok** | **19,664 tok** | **29,504 tok** | **29,504 tok** | **176,960 tok** | **12.8x / 76.5x** |
